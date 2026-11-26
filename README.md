@@ -46,6 +46,9 @@ ffmpeg extracts 16 kHz mp3 ──► /audio/transcriptions (ASR)
 - **The download request waits for generation**: if a reverse proxy times out (e.g. nginx's
   default 60 s) and drops the connection, the background job is unaffected and keeps running;
   the subtitle is still saved and registered when done — refresh the subtitle list later.
+- **ASR is shared across target languages**: transcription runs once per item; requesting a
+  second language reuses the same transcript (and its live progress) and only pays for
+  translation. Translations for different languages run in parallel.
 - Completed results are cached forever: searching/downloading again returns the cache without
   any API calls. To force a redo use REST `POST /LmSubs/Generate {restart:true}`.
 - ASR services without timestamps (plain text only) still work: the text is spread

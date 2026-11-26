@@ -89,13 +89,17 @@ public class LmSubtitleProvider : ISubtitleProvider
         // continues and a later download attempt picks up the finished result.
         await job.Completion.Task.ConfigureAwait(false);
 
-        if (job.Status != "done")
+        // A failed/cancelled job may still have a complete cached result from an earlier run.
+        var srt = _service.Store.GetSrt(itemId, job.Translate, job.TargetLanguage);
+        if (srt == null)
         {
-            throw new InvalidOperationException(job.Error ?? $"Generation {job.Status}");
-        }
+            if (job.Status != "done")
+            {
+                throw new InvalidOperationException(job.Error ?? $"Generation {job.Status}");
+            }
 
-        var srt = _service.Store.GetSrt(itemId, job.Translate, job.TargetLanguage)
-                  ?? throw new InvalidOperationException("Generation finished but no subtitle file was produced");
+            throw new InvalidOperationException("Generation finished but no subtitle file was produced");
+        }
 
         return new SubtitleResponse
         {

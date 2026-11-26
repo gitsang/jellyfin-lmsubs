@@ -1,7 +1,7 @@
 ---
 name: "LMSubs"
 guid: "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b"
-version: "1.3.2.1"
+version: "1.3.3.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "gitsang"
@@ -17,6 +17,10 @@ category: "Metadata"
 artifacts:
   - "Jellyfin.Plugin.LmSubs.dll"
 changelog: |
+  ## 1.3.3.0
+  - ASR is now shared across target languages: one transcription pass per
+    item; a second language reuses the transcript and its progress, paying
+    only for translation. Translations for different languages run in parallel.
   ## 1.3.2.1
   - Fix "error trying to start process 'ffmpeg'": use Jellyfin's resolved
     encoder path (IMediaEncoder.EncoderPath / ProbePath) instead of bare

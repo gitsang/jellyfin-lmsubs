@@ -167,4 +167,25 @@ public class ParsingTests
         Assert.Equal(id, parsed3);
         Assert.Equal(Guid.Empty, LmSubtitleProvider.ParseId("garbage").ItemId);
     }
+
+    [Fact]
+    public void AsrSession_SharedProgressAndChunkBoundaries()
+    {
+        var session = new AsrSession { ItemId = Guid.NewGuid(), ChunkCount = 3 };
+        var notified = 0;
+        session.ChunkReady += () => notified++;
+
+        session.AppendChunk(new List<SubtitleCue> { new(0, 1, "a"), new(1, 2, "b") });
+        session.AppendChunk(new List<SubtitleCue> { new(2, 3, "c") });
+
+        Assert.Equal(2, session.ChunksDone);
+        Assert.Equal(2.0 / 3, session.Progress, 3);
+        Assert.Equal(new[] { 2, 3 }, session.ChunkEndCounts);
+        Assert.Equal(2, notified);
+        Assert.Equal(3, session.SnapshotCues().Count);
+
+        // A consumer that translated 2 cues has fully covered chunk 1 only.
+        Assert.Equal(1, session.ChunkEndCounts.Count(end => end <= 2));
+        Assert.Equal(2, session.ChunkEndCounts.Count(end => end <= 3));
+    }
 }

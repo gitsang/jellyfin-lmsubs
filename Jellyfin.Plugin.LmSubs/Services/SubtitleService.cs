@@ -6,6 +6,66 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LmSubs.Services;
 
+// One ASR pass per item, shared by every target language. Translation jobs attach
+// to the session and consume source cues chunk by chunk as they are produced.
+public class AsrSession
+{
+    public Guid ItemId { get; init; }
+
+    public string ItemName { get; set; } = string.Empty;
+
+    public string Status { get; set; } = "queued";
+
+    public string Stage { get; set; } = string.Empty;
+
+    public double Progress { get; set; }
+
+    public string? Error { get; set; }
+
+    public DateTime StartedUtc { get; } = DateTime.UtcNow;
+
+    public int ChunkCount { get; set; }
+
+    public List<SubtitleCue> Cues { get; } = new();
+
+    // Number of chunks whose cues are fully appended to Cues.
+    public int ChunksDone { get; private set; }
+
+    // Cumulative cue count after each chunk (index i = cues produced through chunk i).
+    public List<int> ChunkEndCounts { get; } = new();
+
+    public CancellationTokenSource Cts { get; } = new();
+
+    public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Raised after each chunk is appended and when the session finishes.
+    public event Action? ChunkReady;
+
+    public void AppendChunk(List<SubtitleCue> cues)
+    {
+        lock (Cues)
+        {
+            Cues.AddRange(cues);
+            ChunksDone++;
+            ChunkEndCounts.Add(Cues.Count);
+            Progress = ChunkCount > 0 ? (double)ChunksDone / ChunkCount : 0;
+        }
+
+        ChunkReady?.Invoke();
+    }
+
+    public void NotifyFinished() => ChunkReady?.Invoke();
+
+    public List<SubtitleCue> SnapshotCues()
+    {
+        lock (Cues)
+        {
+            return Cues.ToList();
+        }
+    }
+}
+
+// Per (item, target language) job riding on the shared ASR session.
 public class GenerationJob
 {
     public Guid ItemId { get; init; }
@@ -37,8 +97,8 @@ public class GenerationJob
     public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
-// Full-video ASR + translation pipeline. Runs sequentially from 0 to the end,
-// persists cues after every chunk, and renders the final SRT only when complete —
+// ASR runs once per item; each target language gets its own translation job that
+// consumes the shared transcript. The final SRT is rendered only when complete —
 // Jellyfin's SubtitleManager then saves/registers it like any downloaded subtitle.
 public class SubtitleService
 {
@@ -48,8 +108,10 @@ public class SubtitleService
     private readonly AudioExtractor _extractor;
     private readonly ILogger<SubtitleService> _logger;
 
+    private readonly ConcurrentDictionary<Guid, AsrSession> _sessions = new();
     private readonly ConcurrentDictionary<(Guid ItemId, string Lang), GenerationJob> _jobs = new();
-    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _itemLocks = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _controlLocks = new();
+    private readonly SemaphoreSlim _asrGate = new(1, 1);
 
     public SubtitleService(
         ILibraryManager libraryManager,
@@ -199,6 +261,12 @@ public class SubtitleService
             cancelled = true;
         }
 
+        if (_sessions.TryGetValue(itemId, out var session) && session.Status is "queued" or "running")
+        {
+            session.Cts.Cancel();
+            cancelled = true;
+        }
+
         return cancelled;
     }
 
@@ -207,8 +275,7 @@ public class SubtitleService
         var lang = NormalizeTargetLanguage(targetLanguage);
         var key = (itemId, translate ? SubtitleStore.LangSlug(lang) : "source");
 
-        // Serialize job control per item; requests may arrive concurrently.
-        var controlLock = _itemLocks.GetOrAdd(itemId, _ => new SemaphoreSlim(1, 1));
+        var controlLock = _controlLocks.GetOrAdd(itemId, _ => new SemaphoreSlim(1, 1));
         controlLock.Wait();
         try
         {
@@ -229,17 +296,17 @@ public class SubtitleService
                 }
             }
 
-            var (path, duration) = ResolveMedia(itemId);
+            var session = EnsureSession(itemId, restart);
             var job = new GenerationJob
             {
                 ItemId = itemId,
                 TargetLanguage = lang,
                 Translate = translate,
-                ItemName = GetVideo(itemId).Name ?? itemId.ToString()
+                ItemName = session.ItemName
             };
 
             _jobs[key] = job;
-            _ = Task.Run(() => RunPipelineAsync(job, path, duration));
+            _ = Task.Run(() => RunJobAsync(job, session));
             return job;
         }
         finally
@@ -248,40 +315,55 @@ public class SubtitleService
         }
     }
 
-    private async Task RunPipelineAsync(GenerationJob job, string mediaPath, double duration)
+    // Caller holds the item control lock.
+    private AsrSession EnsureSession(Guid itemId, bool restart)
     {
-        var itemLock = _itemLocks.GetOrAdd(job.ItemId, _ => new SemaphoreSlim(1, 1));
+        if (_sessions.TryGetValue(itemId, out var existing))
+        {
+            if (!restart && existing.Status is "queued" or "running" or "done")
+            {
+                return existing;
+            }
+
+            existing.Cts.Cancel();
+        }
+
+        var session = new AsrSession
+        {
+            ItemId = itemId,
+            ItemName = GetVideo(itemId).Name ?? itemId.ToString()
+        };
+        _sessions[itemId] = session;
+        _ = Task.Run(() => RunAsrAsync(session));
+        return session;
+    }
+
+    private async Task RunAsrAsync(AsrSession session)
+    {
+        // One ffmpeg/ASR pass at a time server-wide; translation jobs run freely.
         try
         {
-            await itemLock.WaitAsync(job.Cts.Token).ConfigureAwait(false);
+            await _asrGate.WaitAsync(session.Cts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            Finish(job, "cancelled");
-            return;
-        }
-
-        // A newer job may have superseded this one while we waited for the lock.
-        if (job.Cts.IsCancellationRequested ||
-            !ReferenceEquals(GetJob(job.ItemId, job.Translate ? job.TargetLanguage : "source"), job))
-        {
-            itemLock.Release();
-            Finish(job, "cancelled");
+            FinishSession(session, "cancelled");
             return;
         }
 
         var config = Config;
-        var tempDir = Path.Combine(Path.GetTempPath(), "lmsubs-" + job.ItemId.ToString("N"));
+        var tempDir = Path.Combine(Path.GetTempPath(), "lmsubs-" + session.ItemId.ToString("N"));
         Directory.CreateDirectory(tempDir);
 
         try
         {
-            var ct = job.Cts.Token;
-            job.Status = "running";
+            var ct = session.Cts.Token;
+            session.Status = "running";
 
+            var (path, duration) = ResolveMedia(session.ItemId);
             if (duration <= 0)
             {
-                duration = await _extractor.GetDurationSecondsAsync(mediaPath, config, ct).ConfigureAwait(false);
+                duration = await _extractor.GetDurationSecondsAsync(path, config, ct).ConfigureAwait(false);
             }
 
             if (duration <= 0)
@@ -290,21 +372,17 @@ public class SubtitleService
             }
 
             var chunk = Math.Clamp(config.ChunkSeconds, 30, 3600);
-            var chunkCount = (int)Math.Ceiling(duration / chunk);
-            var sourceCues = new List<SubtitleCue>();
-            var finalCues = new List<SubtitleCue>();
-            var context = new List<(string Src, string Dst)>();
-            var ctxMax = Math.Clamp(config.ContextPairs, 0, 30);
+            session.ChunkCount = (int)Math.Ceiling(duration / chunk);
 
-            for (var i = 0; i < chunkCount; i++)
+            for (var i = 0; i < session.ChunkCount; i++)
             {
                 ct.ThrowIfCancellationRequested();
                 var cs = (double)i * chunk;
                 var len = Math.Min(chunk, duration - cs);
-                job.Stage = $"Transcribing {fmt(cs)}–{fmt(cs + len)} ({i + 1}/{chunkCount})";
+                session.Stage = $"Transcribing {fmt(cs)}–{fmt(cs + len)} ({i + 1}/{session.ChunkCount})";
 
                 var file = Path.Combine(tempDir, $"chunk_{i:0000}.mp3");
-                await _extractor.ExtractAsync(mediaPath, null, cs, len, file, config, ct).ConfigureAwait(false);
+                await _extractor.ExtractAsync(path, null, cs, len, file, config, ct).ConfigureAwait(false);
                 List<AsrSegment> segments;
                 try
                 {
@@ -315,27 +393,149 @@ public class SubtitleService
                     try { File.Delete(file); } catch { /* best effort */ }
                 }
 
-                var cues = SubtitleText.Normalize(segments);
-                job.AsrProgress = (double)(i + 1) / chunkCount;
-                if (cues.Count > 0)
-                {
-                    sourceCues.AddRange(cues);
-                    var chunkFinal = job.Translate
-                        ? await TranslateCuesAsync(cues, job.TargetLanguage, context, ctxMax, ct, job).ConfigureAwait(false)
-                        : cues;
-                    finalCues.AddRange(chunkFinal);
+                session.AppendChunk(SubtitleText.Normalize(segments));
+                _store.SaveSourceCues(session.ItemId, session.SnapshotCues());
+            }
 
-                    // Persist progress so a crashed/interrupted run can be inspected or resumed via REST.
-                    _store.SaveSourceCues(job.ItemId, sourceCues);
+            _store.Render(session.ItemId, translated: false, "source", session.SnapshotCues());
+            _logger.LogInformation("LMSubs: transcribed {Item} ({Chunks} chunks)", session.ItemName, session.ChunkCount);
+            FinishSession(session, "done");
+        }
+        catch (OperationCanceledException)
+        {
+            FinishSession(session, "cancelled");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "LMSubs: ASR failed for {Item}", session.ItemName);
+            session.Error = ex.Message;
+            FinishSession(session, "error");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { /* best effort */ }
+            _asrGate.Release();
+        }
+
+        static string fmt(double s) => TimeSpan.FromSeconds(s).ToString(@"hh\:mm\:ss");
+    }
+
+    private static void FinishSession(AsrSession session, string status)
+    {
+        session.Status = status;
+        if (status == "done")
+        {
+            session.Progress = 1;
+            session.Stage = "Done";
+        }
+
+        session.Completion.TrySetResult();
+        session.NotifyFinished();
+    }
+
+    private async Task RunJobAsync(GenerationJob job, AsrSession session)
+    {
+        var config = Config;
+        var context = new List<(string Src, string Dst)>();
+        var ctxMax = Math.Clamp(config.ContextPairs, 0, 30);
+        var finalCues = new List<SubtitleCue>();
+        var translatedCount = 0;
+        var consumedChunks = 0;
+
+        try
+        {
+            var ct = job.Cts.Token;
+            job.Status = "running";
+
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                List<SubtitleCue> snapshot;
+                int chunksDone;
+                int chunkCount;
+                int fullyTranslatedChunks;
+                lock (session.Cues)
+                {
+                    snapshot = session.Cues.ToList();
+                    chunksDone = session.ChunksDone;
+                    chunkCount = Math.Max(1, session.ChunkCount);
+                    fullyTranslatedChunks = session.ChunkEndCounts.Count(end => end <= translatedCount);
+                }
+
+                var finished = session.Status is "done" or "error" or "cancelled";
+                var baseP = (double)fullyTranslatedChunks / chunkCount;
+
+                // Nothing new to do: wait for the next chunk instead of busy-looping.
+                var hasWork = job.Translate
+                    ? snapshot.Count > translatedCount
+                    : consumedChunks < chunksDone;
+                if (!hasWork && !finished)
+                {
+                    await WaitForChunkAsync(session, chunksDone, ct).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (job.Translate && snapshot.Count > translatedCount)
+                {
+                    var pending = snapshot.Skip(translatedCount).ToList();
+                    job.Stage = $"Translating lines {translatedCount + 1}–{snapshot.Count}";
+
+                    // Interpolate between the last fully translated chunk and ASR's position.
+                    var span = (double)chunksDone / chunkCount - baseP;
+                    var done = await TranslateCuesAsync(pending, job.TargetLanguage, context, ctxMax, ct,
+                        fraction =>
+                        {
+                            job.AsrProgress = session.Progress;
+                            job.TranslateProgress = Math.Min(1, baseP + Math.Max(0, span) * fraction);
+                        }).ConfigureAwait(false);
+                    finalCues.AddRange(done);
+                    translatedCount = snapshot.Count;
                     _store.SaveCues(job.ItemId, job.TargetLanguage, finalCues);
                 }
 
-                job.TranslateProgress = job.AsrProgress;
-                job.Progress = (double)(i + 1) / chunkCount;
+                consumedChunks = chunksDone;
+
+                job.AsrProgress = session.Progress;
+                if (job.Translate)
+                {
+                    lock (session.Cues)
+                    {
+                        fullyTranslatedChunks = session.ChunkEndCounts.Count(end => end <= translatedCount);
+                    }
+
+                    job.TranslateProgress = Math.Max(job.TranslateProgress, (double)fullyTranslatedChunks / chunkCount);
+                    job.Progress = job.TranslateProgress;
+                }
+                else
+                {
+                    job.TranslateProgress = session.Progress;
+                    job.Progress = session.Progress;
+                }
+
+                if (finished)
+                {
+                    break;
+                }
+
+                await WaitForChunkAsync(session, chunksDone, ct).ConfigureAwait(false);
+            }
+
+            if (session.Status != "done")
+            {
+                job.Error = session.Error ?? $"ASR {session.Status}";
+                Finish(job, session.Status == "cancelled" ? "cancelled" : "error");
+                return;
+            }
+
+            if (!job.Translate)
+            {
+                finalCues = session.SnapshotCues();
             }
 
             _store.Render(job.ItemId, job.Translate, job.TargetLanguage, finalCues);
-            _logger.LogInformation("LMSubs: generated {Count} cues for {Item}", finalCues.Count, job.ItemName);
+            _logger.LogInformation("LMSubs: generated {Count} cues for {Item} ({Lang})",
+                finalCues.Count, job.ItemName, job.Translate ? job.TargetLanguage : "source");
             Finish(job, "done");
         }
         catch (OperationCanceledException)
@@ -344,17 +544,32 @@ public class SubtitleService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "LMSubs: pipeline failed for {Item}", job.ItemName);
+            _logger.LogError(ex, "LMSubs: translation failed for {Item} ({Lang})", job.ItemName, job.TargetLanguage);
             job.Error = ex.Message;
             Finish(job, "error");
         }
+    }
+
+    private static async Task WaitForChunkAsync(AsrSession session, int chunksDone, CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnChunk() => tcs.TrySetResult();
+        session.ChunkReady += OnChunk;
+        try
+        {
+            // Re-check after subscribing to avoid a lost wakeup.
+            if (session.Status is "queued" or "running" && session.ChunksDone == chunksDone)
+            {
+                using var reg = ct.Register(() => tcs.TrySetResult());
+                await Task.WhenAny(tcs.Task, session.Completion.Task).ConfigureAwait(false);
+            }
+        }
         finally
         {
-            try { Directory.Delete(tempDir, true); } catch { /* best effort */ }
-            itemLock.Release();
+            session.ChunkReady -= OnChunk;
         }
 
-        static string fmt(double s) => TimeSpan.FromSeconds(s).ToString(@"hh\:mm\:ss");
+        ct.ThrowIfCancellationRequested();
     }
 
     private static void Finish(GenerationJob job, string status)
@@ -364,6 +579,8 @@ public class SubtitleService
         if (status == "done")
         {
             job.Progress = 1;
+            job.TranslateProgress = 1;
+            job.AsrProgress = 1;
             job.Stage = "Done";
         }
 
@@ -373,7 +590,7 @@ public class SubtitleService
     private async Task<List<SubtitleCue>> TranslateCuesAsync(
         List<SubtitleCue> cues, string targetLanguage,
         List<(string Src, string Dst)> context, int ctxMax, CancellationToken ct,
-        GenerationJob? job = null)
+        Action<double>? onBatch = null)
     {
         var config = Config;
         var batchSize = Math.Clamp(config.TranslateBatchSize, 1, 100);
@@ -385,14 +602,7 @@ public class SubtitleService
             var batch = cues.Skip(offset).Take(batchSize).ToList();
             var texts = batch.Select(c => c.Text).ToList();
             var translations = await _openAi.TranslateBatchAsync(texts, context, targetLanguage, config, ct).ConfigureAwait(false);
-
-            if (job != null)
-            {
-                // Translate lags ASR by at most the current chunk; interpolate within it.
-                var done = Math.Min(offset + batch.Count, cues.Count);
-                var chunkSpan = job.AsrProgress - job.TranslateProgress;
-                job.TranslateProgress = job.TranslateProgress + chunkSpan * done / cues.Count;
-            }
+            onBatch?.Invoke((double)Math.Min(offset + batch.Count, cues.Count) / cues.Count);
 
             for (var i = 0; i < batch.Count; i++)
             {
