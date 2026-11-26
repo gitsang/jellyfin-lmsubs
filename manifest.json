@@ -1,1 +1,28 @@
-[{"guid": "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b", "name": "LMSubs", "description": "OpenAI-compatible ASR (speech-to-text) + LLM subtitle translation. Works like OpenSubtitles: search and download 'LM Subtitles' in the Edit Subtitles dialog; the server generates the full subtitle, which Jellyfin then saves and registers. Provider presets plus configurable Base URL / API Key / Model. Completed results are cached. No web modification.", "overview": "ASR transcription + LLM subtitle translation (OpenSubtitles-style download flow)", "owner": "gitsang", "category": "Metadata", "versions": [{"version": "1.3.0.0", "changelog": "OpenSubtitles-style flow: generate via Edit Subtitles -> search -> download; full sequential generation; removed injected tracks and playback-event triggers; REST API retained.", "targetAbi": "10.10.0.0", "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.3.0.0/lmsubs_1.3.0.0.zip", "checksum": "49f42159edddea5b427557d3e80734e7", "timestamp": "2026-11-26T09:35:20Z"}]}]
+[
+  {
+    "guid": "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b",
+    "name": "LMSubs",
+    "description": "OpenAI-compatible ASR (speech-to-text) + LLM subtitle translation. Works like OpenSubtitles: search and download 'LM Subtitles' in the Edit Subtitles dialog; the server generates the full subtitle, which Jellyfin then saves and registers. Provider presets plus configurable Base URL / API Key / Model. Completed results are cached. No web modification.",
+    "overview": "ASR transcription + LLM subtitle translation (OpenSubtitles-style download flow)",
+    "owner": "gitsang",
+    "category": "Metadata",
+    "versions": [
+      {
+        "version": "1.3.0.1",
+        "changelog": "Settings page: Advanced section single column; clearer translation-toggle label.",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.3.0.1/lmsubs_1.3.0.1.zip",
+        "checksum": "b0ab427ac1447e003831279c13a6db14",
+        "timestamp": "2026-11-26T09:53:21Z"
+      },
+      {
+        "version": "1.3.0.0",
+        "changelog": "OpenSubtitles-style flow: generate via Edit Subtitles -> search -> download; full sequential generation; removed injected tracks and playback-event triggers; REST API retained.",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.3.0.0/lmsubs_1.3.0.0.zip",
+        "checksum": "49f42159edddea5b427557d3e80734e7",
+        "timestamp": "2026-11-26T09:35:20Z"
+      }
+    ]
+  }
+]

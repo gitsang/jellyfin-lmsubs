@@ -8,13 +8,8 @@
             gap: 0 2.5em;
             align-items: start;
         }
-        .lmsubs-advanced {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 0 2em;
-        }
         @media (max-width: 60em) {
-            .lmsubs-columns, .lmsubs-advanced {
+            .lmsubs-columns {
                 grid-template-columns: 1fr;
             }
         }
@@ -105,7 +100,7 @@
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label class="emby-checkbox-label">
                                 <input is="emby-checkbox" type="checkbox" id="AutoTranslate" />
-                                <span>Translate automatically after transcription</span>
+                                <span>Include translation (uncheck for transcription only)</span>
                             </label>
                         </div>
                         <div class="inputContainer">
@@ -116,7 +111,7 @@
                 </div>
 
                 <h3 class="sectionTitle">Advanced</h3>
-                <div class="lmsubs-advanced">
+                <div>
                     <div class="inputContainer">
                         <input is="emby-input" type="text" id="FfmpegPath" label="ffmpeg path (empty = Jellyfin encoder path / PATH)" />
                     </div>
