@@ -34,6 +34,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             {
                 Name = Name,
                 EmbeddedResourcePath = GetType().Namespace + ".Configuration.configPage.html"
+            },
+            new PluginPageInfo
+            {
+                Name = "LmSubsConfigJs",
+                EmbeddedResourcePath = GetType().Namespace + ".Configuration.configPage.js"
             }
         };
     }

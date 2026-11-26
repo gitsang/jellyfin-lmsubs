@@ -1,1 +1,36 @@
-[{"guid": "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b", "name": "LMSubs", "description": "OpenAI-compatible ASR (speech-to-text) + LLM subtitle translation. Adds native 'LM 字幕' / 'LM 字幕（实时）' subtitle tracks: selecting one starts transcription at the current playback position, using cache when possible. No web modification. Configurable Base URL / API Key / Model.", "overview": "ASR 语音转写 + LLM 字幕翻译（原生字幕轨，零 Web 修改）", "owner": "gitsang", "category": "Metadata", "versions": [{"version": "1.1.0.0", "changelog": "Native LM subtitle tracks in every client; position-first pipeline with disk cache; live track re-transcribes and overwrites; removed web injection.", "targetAbi": "10.10.0.0", "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.1.0.0/lmsubs_1.1.0.0.zip", "checksum": "77e18d99169baae3397d93b39197c688", "timestamp": "2026-11-26T03:30:00Z"}, {"version": "1.0.0.0", "changelog": "Initial release", "targetAbi": "10.10.0.0", "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.0.0.0/lmsubs_1.0.0.0.zip", "checksum": "82c080d551bacf8ab39458089053347b", "timestamp": "2026-11-26T02:26:21Z"}]}]
+[
+  {
+    "guid": "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b",
+    "name": "LMSubs",
+    "description": "OpenAI-compatible ASR (speech-to-text) + LLM subtitle translation. Adds native 'LM 字幕' / 'LM 字幕（实时）' subtitle tracks: selecting one starts transcription at the current playback position, using cache when possible. No web modification. Configurable Base URL / API Key / Model.",
+    "overview": "ASR 语音转写 + LLM 字幕翻译（原生字幕轨，零 Web 修改）",
+    "owner": "gitsang",
+    "category": "Metadata",
+    "versions": [
+      {
+        "version": "1.1.1.0",
+        "changelog": "Fix config page buttons on jellyfin 10.9+: inline scripts are no longer executed by jellyfin-web; controller moved to an ES module loaded via data-controller.",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.1.1.0/lmsubs_1.1.1.0.zip",
+        "checksum": "b30d4230c0cb10d8fbf9c971ec1e938d",
+        "timestamp": "2026-11-26T06:49:12Z"
+      },
+      {
+        "version": "1.1.0.0",
+        "changelog": "Native LM subtitle tracks in every client; position-first pipeline with disk cache; live track re-transcribes and overwrites; removed web injection.",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.1.0.0/lmsubs_1.1.0.0.zip",
+        "checksum": "77e18d99169baae3397d93b39197c688",
+        "timestamp": "2026-11-26T03:30:00Z"
+      },
+      {
+        "version": "1.0.0.0",
+        "changelog": "Initial release",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.0.0.0/lmsubs_1.0.0.0.zip",
+        "checksum": "82c080d551bacf8ab39458089053347b",
+        "timestamp": "2026-11-26T02:26:21Z"
+      }
+    ]
+  }
+]

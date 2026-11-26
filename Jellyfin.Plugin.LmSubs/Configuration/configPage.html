@@ -1,11 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <title>LMSubs</title>
-</head>
-<body>
 <div id="LmSubsConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+     data-controller="__plugin/LmSubsConfigJs"
      data-require="emby-input,emby-button,emby-select,emby-checkbox">
     <div data-role="content">
         <div class="content-primary">
@@ -43,7 +37,7 @@
                 </div>
                 <div class="inputContainer">
                     <input is="emby-input" type="number" id="ChunkSeconds" min="30" max="3600" label="分段时长（秒）" />
-                    <div class="fieldDescription">全量转写时按此长度用 ffmpeg 切分音频，逐段请求 ASR。建议 300–900。</div>
+                    <div class="fieldDescription">按此长度用 ffmpeg 切分音频，从当前播放位置的段开始逐段请求 ASR。想更快出字幕可调小（120–300）。</div>
                 </div>
                 <div class="inputContainer">
                     <input is="emby-input" type="number" id="MaxParallelChunks" min="1" max="8" label="ASR 并发数" />
@@ -80,7 +74,7 @@
                 <div class="checkboxContainer checkboxContainer-withDescription">
                     <label class="emby-checkbox-label">
                         <input is="emby-checkbox" type="checkbox" id="AutoTranslate" />
-                        <span>全量转写完成后自动翻译</span>
+                        <span>转写后自动翻译</span>
                     </label>
                 </div>
                 <div class="inputContainer">
@@ -113,73 +107,4 @@
             </form>
         </div>
     </div>
-    <script type="text/javascript">
-        (function () {
-            var pluginId = '9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b';
-            var textFields = ['AsrBaseUrl', 'AsrApiKey', 'AsrModel', 'AsrLanguage', 'AsrPrompt',
-                'TranslateBaseUrl', 'TranslateApiKey', 'TranslateModel', 'TargetLanguage',
-                'TranslateExtraPrompt', 'FfmpegPath'];
-            var numFields = ['ChunkSeconds', 'MaxParallelChunks', 'ContextPairs', 'TranslateBatchSize',
-                'AudioBitrateKbps', 'RequestTimeoutSeconds'];
-
-            function load(page) {
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    textFields.forEach(function (k) { page.querySelector('#' + k).value = config[k] || ''; });
-                    numFields.forEach(function (k) { page.querySelector('#' + k).value = config[k]; });
-                    page.querySelector('#BilingualMode').value = config.BilingualMode || 'bilingual';
-                    page.querySelector('#AutoTranslate').checked = !!config.AutoTranslate;
-                    Dashboard.hideLoadingMsg();
-                });
-            }
-
-            function collect(page) {
-                var c = {};
-                textFields.forEach(function (k) { c[k] = page.querySelector('#' + k).value.trim(); });
-                numFields.forEach(function (k) { c[k] = parseInt(page.querySelector('#' + k).value, 10) || 0; });
-                c.BilingualMode = page.querySelector('#BilingualMode').value;
-                c.AutoTranslate = page.querySelector('#AutoTranslate').checked;
-                return c;
-            }
-
-            document.querySelector('#LmSubsConfigPage').addEventListener('pageshow', function () { load(this); });
-
-            document.querySelector('#LmSubsConfigForm').addEventListener('submit', function (e) {
-                e.preventDefault();
-                var page = Dashboard.getPluginPage(pluginId);
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    Object.assign(config, collect(page));
-                    ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
-                        Dashboard.processPluginConfigurationUpdateResult(result);
-                    });
-                });
-                return false;
-            });
-
-            document.querySelector('#LmSubsTestBtn').addEventListener('click', function () {
-                var page = Dashboard.getPluginPage(pluginId);
-                var out = page.querySelector('#LmSubsTestResult');
-                out.textContent = '测试中…';
-                // Save first so the server tests the current form values.
-                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    Object.assign(config, collect(page));
-                    return ApiClient.updatePluginConfiguration(pluginId, config);
-                }).then(function () {
-                    return ApiClient.ajax({
-                        type: 'POST',
-                        url: ApiClient.getUrl('LmSubs/Test'),
-                        dataType: 'json'
-                    });
-                }).then(function (r) {
-                    out.textContent = 'ASR: ' + (r.asrOk ? '✓' : '✗ ' + (r.asrError || '')) +
-                        '   翻译: ' + (r.translateOk ? '✓' : '✗ ' + (r.translateError || ''));
-                }).catch(function (err) {
-                    out.textContent = '测试失败: ' + err;
-                });
-            });
-        })();
-    </script>
 </div>
-</body>
-</html>

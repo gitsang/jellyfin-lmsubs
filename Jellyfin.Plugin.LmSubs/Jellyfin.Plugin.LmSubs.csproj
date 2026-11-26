@@ -4,9 +4,9 @@
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>Jellyfin.Plugin.LmSubs</RootNamespace>
     <AssemblyName>Jellyfin.Plugin.LmSubs</AssemblyName>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
-    <FileVersion>1.1.0.0</FileVersion>
-    <Version>1.1.0.0</Version>
+    <AssemblyVersion>1.1.1.0</AssemblyVersion>
+    <FileVersion>1.1.1.0</FileVersion>
+    <Version>1.1.1.0</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Configuration\configPage.html" />
+    <EmbeddedResource Include="Configuration\configPage.js" />
   </ItemGroup>
 
   <ItemGroup>
