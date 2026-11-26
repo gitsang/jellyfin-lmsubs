@@ -1,5 +1,7 @@
 # jellyfin-lmsubs
 
+English | [简体中文](README.zh_cn.md)
+
 Jellyfin plugin for **ASR speech-to-text + LLM subtitle translation**, using
 **OpenAI-compatible** APIs throughout. Provider / Base URL / API Key / Model are
 configurable for both stages in the plugin settings page.
