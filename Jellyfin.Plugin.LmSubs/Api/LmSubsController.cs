@@ -1,12 +1,7 @@
 using System.ComponentModel.DataAnnotations;
-using Jellyfin.Plugin.LmSubs.Providers;
 using Jellyfin.Plugin.LmSubs.Services;
-using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LmSubs.Api;
 
@@ -18,38 +13,26 @@ public class LmSubsController : ControllerBase
 {
     private readonly SubtitleService _subtitles;
     private readonly OpenAiClient _openAi;
-    private readonly IItemRepository _itemRepo;
-    private readonly ILibraryManager _libraryManager;
-    private readonly ILogger<LmSubsController> _logger;
 
-    public LmSubsController(
-        SubtitleService subtitles,
-        OpenAiClient openAi,
-        IItemRepository itemRepo,
-        ILibraryManager libraryManager,
-        ILogger<LmSubsController> logger)
+    public LmSubsController(SubtitleService subtitles, OpenAiClient openAi)
     {
         _subtitles = subtitles;
         _openAi = openAi;
-        _itemRepo = itemRepo;
-        _libraryManager = libraryManager;
-        _logger = logger;
     }
 
     public record GenerateRequest(
         [Required] Guid ItemId,
-        double? Position = null,
-        bool Live = false,
         bool Translate = true,
-        string? TargetLanguage = null);
+        string? TargetLanguage = null,
+        bool Restart = false);
 
     [HttpPost("Generate")]
     public ActionResult Generate([FromBody] GenerateRequest request)
     {
         try
         {
-            var job = _subtitles.EnsureRunning(request.ItemId, request.Position, request.Live, request.TargetLanguage, request.Translate);
-            return Ok(job == null ? new { status = "none" } : JobDto(job));
+            var job = _subtitles.EnsureRunning(request.ItemId, request.Translate, request.TargetLanguage, request.Restart);
+            return Ok(JobDto(job));
         }
         catch (Exception ex)
         {
@@ -61,32 +44,17 @@ public class LmSubsController : ControllerBase
     public ActionResult Status([FromRoute] Guid itemId)
     {
         var job = _subtitles.GetJob(itemId);
-        var hasSource = _subtitles.Store.GetSrt(itemId, false, string.Empty) != null;
         if (job == null)
         {
-            return Ok(new { status = hasSource ? "done" : "none", hasSource });
+            var hasResult = _subtitles.Store.GetSrt(itemId, true, string.Empty) != null;
+            return Ok(new { status = hasResult ? "done" : "none" });
         }
 
-        var dto = JobDto(job);
-        dto["hasSource"] = hasSource;
-        return Ok(dto);
+        return Ok(JobDto(job));
     }
 
     [HttpPost("Cancel/{itemId:guid}")]
     public ActionResult Cancel([FromRoute] Guid itemId) => Ok(new { cancelled = _subtitles.Cancel(itemId) });
-
-    [HttpPost("Install/{itemId:guid}")]
-    public ActionResult Install([FromRoute] Guid itemId)
-    {
-        if (_libraryManager.GetItemById(itemId) is not Video video)
-        {
-            return NotFound(new { error = "Not a video item" });
-        }
-
-        var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
-        var changed = LmTrackInstaller.EnsureTracks(video, _itemRepo, _subtitles.Store, config.TargetLanguage, _logger);
-        return Ok(new { changed });
-    }
 
     public record TranslateRequest([Required] Guid ItemId, string? TargetLanguage = null);
 
@@ -105,30 +73,24 @@ public class LmSubsController : ControllerBase
     }
 
     [HttpGet("Subtitles/{itemId:guid}")]
-    [AllowAnonymous] // <track> requests cannot carry auth headers; item ids are unguessable GUIDs
+    [AllowAnonymous] // subtitle fetches cannot carry auth headers; item ids are unguessable GUIDs
     public ActionResult Subtitles(
         [FromRoute] Guid itemId,
-        [FromQuery] string mode = "cached",
+        [FromQuery] string mode = "translated",
         [FromQuery] string? lang = null,
         [FromQuery] string format = "vtt")
     {
         var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
         var targetLang = lang ?? config.TargetLanguage;
-        var live = string.Equals(mode, "live", StringComparison.OrdinalIgnoreCase);
         var translated = !string.Equals(mode, "source", StringComparison.OrdinalIgnoreCase);
-
-        if (translated)
-        {
-            try { _subtitles.EnsureRunning(itemId, null, force: false); } catch { /* item may be gone */ }
-        }
 
         if (string.Equals(format, "srt", StringComparison.OrdinalIgnoreCase))
         {
-            var srt = _subtitles.Store.GetSrt(itemId, translated, targetLang, live);
+            var srt = _subtitles.Store.GetSrt(itemId, translated, targetLang);
             return srt == null ? NotFound() : Content(srt, "application/x-subrip; charset=utf-8");
         }
 
-        var vtt = _subtitles.Store.GetVtt(itemId, translated, targetLang, live);
+        var vtt = _subtitles.Store.GetVtt(itemId, translated, targetLang);
         return vtt == null ? NotFound() : Content(vtt, "text/vtt; charset=utf-8");
     }
 

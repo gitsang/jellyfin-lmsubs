@@ -15,6 +15,5 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<SubtitleStore>();
         serviceCollection.AddSingleton<SubtitleService>();
         serviceCollection.AddSingleton<Providers.LmSubtitleProvider>();
-        serviceCollection.AddHostedService<LmPlaybackMonitor>();
     }
 }

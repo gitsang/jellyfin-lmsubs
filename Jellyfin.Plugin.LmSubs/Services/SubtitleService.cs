@@ -26,11 +26,16 @@ public class GenerationJob
 
     public string TargetLanguage { get; set; } = string.Empty;
 
-    public double StartSeconds { get; init; }
+    public bool Translate { get; set; }
 
     public CancellationTokenSource Cts { get; } = new();
+
+    public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
 
+// Full-video ASR + translation pipeline. Runs sequentially from 0 to the end,
+// persists cues after every chunk, and renders the final SRT only when complete —
+// Jellyfin's SubtitleManager then saves/registers it like any downloaded subtitle.
 public class SubtitleService
 {
     private readonly ILibraryManager _libraryManager;
@@ -41,7 +46,6 @@ public class SubtitleService
 
     private readonly ConcurrentDictionary<Guid, GenerationJob> _jobs = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _itemLocks = new();
-    private readonly ConcurrentDictionary<Guid, double> _lastStartSeconds = new();
 
     public SubtitleService(
         ILibraryManager libraryManager,
@@ -66,7 +70,7 @@ public class SubtitleService
         _libraryManager.GetItemById(itemId) as Video
         ?? throw new KeyNotFoundException($"Video item not found: {itemId}");
 
-    public (string Path, int? AudioStreamIndex, double Duration) ResolveMedia(Guid itemId, int? audioStreamIndex)
+    public (string Path, double Duration) ResolveMedia(Guid itemId)
     {
         var video = GetVideo(itemId);
         var sources = video.GetMediaSources(true);
@@ -78,19 +82,20 @@ public class SubtitleService
         }
 
         double duration = source.RunTimeTicks.HasValue ? TimeSpan.FromTicks(source.RunTimeTicks.Value).TotalSeconds : 0;
-        return (path, audioStreamIndex, duration);
+        return (path, duration);
     }
 
-    public void ReportPlaybackPosition(Guid itemId, double seconds)
+    public Guid FindItemIdByMediaPath(string? mediaPath)
     {
-        if (seconds >= 0)
+        if (string.IsNullOrEmpty(mediaPath))
         {
-            _lastStartSeconds[itemId] = seconds;
+            return Guid.Empty;
         }
-    }
 
-    public double GetPlaybackPosition(Guid itemId) =>
-        _lastStartSeconds.TryGetValue(itemId, out var s) ? s : 0;
+        var query = new InternalItemsQuery { Path = mediaPath, MediaTypes = new[] { Jellyfin.Data.Enums.MediaType.Video }, Recursive = true };
+        var item = _libraryManager.GetItemList(query).FirstOrDefault();
+        return item?.Id ?? Guid.Empty;
+    }
 
     public static string ThreeLetterLanguage(string language)
     {
@@ -145,27 +150,18 @@ public class SubtitleService
         if (_jobs.TryGetValue(itemId, out var job) && job.Status is "queued" or "running")
         {
             job.Cts.Cancel();
-            job.Status = "cancelled";
-            job.FinishedUtc = DateTime.UtcNow;
             return true;
         }
 
         return false;
     }
 
-    public GenerationJob? EnsureRunning(Guid itemId, double? startPosition, bool force, string? targetLanguage = null, bool translate = true)
+    public GenerationJob EnsureRunning(Guid itemId, bool translate = true, string? targetLanguage = null, bool restart = false)
     {
         var config = Config;
         var lang = string.IsNullOrWhiteSpace(targetLanguage) ? config.TargetLanguage : targetLanguage!;
 
-        if (startPosition.HasValue)
-        {
-            ReportPlaybackPosition(itemId, startPosition.Value);
-        }
-
-        var start = startPosition ?? GetPlaybackPosition(itemId);
-
-        // Serialize job control per item; events arrive concurrently.
+        // Serialize job control per item; requests may arrive concurrently.
         var controlLock = _itemLocks.GetOrAdd(itemId, _ => new SemaphoreSlim(1, 1));
         controlLock.Wait();
         try
@@ -174,37 +170,30 @@ public class SubtitleService
             {
                 if (existing.Status is "queued" or "running")
                 {
-                    if (!force)
-                    {
-                        return existing;
-                    }
-
-                    // live re-trigger while running: only restart on a real seek (>20s)
-                    var runningStart = existing.StartSeconds;
-                    if (Math.Abs(start - runningStart) <= 20)
+                    if (!restart)
                     {
                         return existing;
                     }
 
                     existing.Cts.Cancel();
                 }
-                else if (!force && existing.Status == "done" && IsComplete(itemId))
+                else if (!restart && existing.Status == "done")
                 {
-                    return existing; 
+                    return existing;
                 }
             }
 
-            var (path, streamIdx, duration) = ResolveMedia(itemId, null);
+            var (path, duration) = ResolveMedia(itemId);
             var job = new GenerationJob
             {
                 ItemId = itemId,
                 TargetLanguage = lang,
-                StartSeconds = start,
+                Translate = translate,
                 ItemName = GetVideo(itemId).Name ?? itemId.ToString()
             };
 
             _jobs[itemId] = job;
-            _ = Task.Run(() => RunPipelineAsync(job, path, streamIdx, duration, start, force, translate));
+            _ = Task.Run(() => RunPipelineAsync(job, path, duration));
             return job;
         }
         finally
@@ -213,28 +202,7 @@ public class SubtitleService
         }
     }
 
-    public bool IsComplete(Guid itemId)
-    {
-        try
-        {
-            var (_, _, duration) = ResolveMedia(itemId, null);
-            if (duration <= 0)
-            {
-                return false;
-            }
-
-            var cues = _store.LoadCues(itemId, Config.TargetLanguage);
-            return cues.Count > 0 && cues.Max(c => c.End) >= duration - Math.Max(30, duration * 0.02);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task RunPipelineAsync(
-        GenerationJob job, string mediaPath, int? audioStreamIndex,
-        double duration, double startSeconds, bool force, bool translate)
+    private async Task RunPipelineAsync(GenerationJob job, string mediaPath, double duration)
     {
         var itemLock = _itemLocks.GetOrAdd(job.ItemId, _ => new SemaphoreSlim(1, 1));
         try
@@ -243,8 +211,7 @@ public class SubtitleService
         }
         catch (OperationCanceledException)
         {
-            job.Status = "cancelled";
-            job.FinishedUtc = DateTime.UtcNow;
+            Finish(job, "cancelled");
             return;
         }
 
@@ -252,8 +219,7 @@ public class SubtitleService
         if (job.Cts.IsCancellationRequested || !ReferenceEquals(GetJob(job.ItemId), job))
         {
             itemLock.Release();
-            job.Status = "cancelled";
-            job.FinishedUtc = DateTime.UtcNow;
+            Finish(job, "cancelled");
             return;
         }
 
@@ -278,50 +244,20 @@ public class SubtitleService
 
             var chunk = Math.Clamp(config.ChunkSeconds, 30, 3600);
             var chunkCount = (int)Math.Ceiling(duration / chunk);
-            var startChunk = Math.Clamp((int)(Math.Max(0, startSeconds) / chunk), 0, chunkCount - 1);
-
-            var order = Enumerable.Range(startChunk, chunkCount - startChunk)
-                .Concat(Enumerable.Range(0, startChunk))
-                .ToList();
-
-            var covered = new bool[chunkCount];
-            if (!force)
-            {
-                var cachedCues = _store.LoadCues(job.ItemId, job.TargetLanguage);
-                foreach (var i in order)
-                {
-                    var cs = (double)i * chunk;
-                    var ce = Math.Min(cs + chunk, duration);
-                    // A chunk counts as covered when cues reach its end (silent tails included).
-                    covered[i] = cachedCues.Any(c => c.End >= ce - 1.0 && c.Start < ce);
-                }
-            }
-
-            var pending = order.Where(i => !covered[i]).ToList();
-            if (pending.Count == 0)
-            {
-                job.Status = "done";
-                job.Progress = 1;
-                job.Stage = "Fully cached";
-                job.FinishedUtc = DateTime.UtcNow;
-                return;
-            }
-
-            var doneCount = chunkCount - pending.Count;
-            var sourceCues = force ? new List<SubtitleCue>() : _store.LoadSourceCues(job.ItemId);
-            var translatedCues = _store.LoadCues(job.ItemId, job.TargetLanguage);
+            var sourceCues = new List<SubtitleCue>();
+            var finalCues = new List<SubtitleCue>();
             var context = new List<(string Src, string Dst)>();
             var ctxMax = Math.Clamp(config.ContextPairs, 0, 30);
 
-            foreach (var i in pending)
+            for (var i = 0; i < chunkCount; i++)
             {
                 ct.ThrowIfCancellationRequested();
                 var cs = (double)i * chunk;
                 var len = Math.Min(chunk, duration - cs);
-                job.Stage = $"Transcribing {fmt(cs)}–{fmt(cs + len)} ({doneCount + 1}/{chunkCount})";
+                job.Stage = $"Transcribing {fmt(cs)}–{fmt(cs + len)} ({i + 1}/{chunkCount})";
 
                 var file = Path.Combine(tempDir, $"chunk_{i:0000}.mp3");
-                await _extractor.ExtractAsync(mediaPath, audioStreamIndex, cs, len, file, config, ct).ConfigureAwait(false);
+                await _extractor.ExtractAsync(mediaPath, null, cs, len, file, config, ct).ConfigureAwait(false);
                 List<AsrSegment> segments;
                 try
                 {
@@ -336,55 +272,32 @@ public class SubtitleService
                 if (cues.Count > 0)
                 {
                     sourceCues.AddRange(cues);
-                    _store.SaveSourceCues(job.ItemId, sourceCues);
-
-                    var finalCues = translate
-                        ? await TranslateCuesWithContextAsync(cues, job.TargetLanguage, context, ctxMax, ct).ConfigureAwait(false)
+                    var chunkFinal = job.Translate
+                        ? await TranslateCuesAsync(cues, job.TargetLanguage, context, ctxMax, ct).ConfigureAwait(false)
                         : cues;
+                    finalCues.AddRange(chunkFinal);
 
-                    translatedCues = MergeRange(translatedCues, finalCues, cs, cs + len, replace: force);
-                    _store.SaveCues(job.ItemId, job.TargetLanguage, translatedCues);
-                    _store.Render(job.ItemId, null, translated: true, live: false, job.TargetLanguage, translatedCues);
-                    if (force)
-                    {
-                        _store.Render(job.ItemId, null, translated: true, live: true, job.TargetLanguage, translatedCues);
-                    }
-                }
-                else if (force)
-                {
-                    // silent chunk: drop stale content in this range
-                    translatedCues = MergeRange(translatedCues, Array.Empty<SubtitleCue>(), cs, cs + len, replace: true);
-                    _store.SaveCues(job.ItemId, job.TargetLanguage, translatedCues);
-                    _store.Render(job.ItemId, null, translated: true, live: false, job.TargetLanguage, translatedCues);
-                    _store.Render(job.ItemId, null, translated: true, live: true, job.TargetLanguage, translatedCues);
+                    // Persist progress so a crashed/interrupted run can be inspected or resumed via REST.
+                    _store.SaveSourceCues(job.ItemId, sourceCues);
+                    _store.SaveCues(job.ItemId, job.TargetLanguage, finalCues);
                 }
 
-                doneCount++;
-                job.Progress = (double)doneCount / chunkCount;
-                _logger.LogDebug("LMSubs: {Item} chunk {Index}/{Total} done ({Count} cues)",
-                    job.ItemName, i + 1, chunkCount, cues.Count);
+                job.Progress = (double)(i + 1) / chunkCount;
             }
 
-            _store.Render(job.ItemId, null, translated: true, live: false, job.TargetLanguage, translatedCues);
-            _store.Render(job.ItemId, null, translated: true, live: true, job.TargetLanguage, translatedCues);
-
-            job.Status = "done";
-            job.Progress = 1;
-            job.Stage = "Done";
-            job.FinishedUtc = DateTime.UtcNow;
-            _logger.LogInformation("LMSubs: pipeline finished for {Item}", job.ItemName);
+            _store.Render(job.ItemId, translated: true, job.TargetLanguage, finalCues);
+            _logger.LogInformation("LMSubs: generated {Count} cues for {Item}", finalCues.Count, job.ItemName);
+            Finish(job, "done");
         }
         catch (OperationCanceledException)
         {
-            job.Status = "cancelled";
-            job.FinishedUtc = DateTime.UtcNow;
+            Finish(job, "cancelled");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "LMSubs: pipeline failed for {Item}", job.ItemName);
-            job.Status = "error";
             job.Error = ex.Message;
-            job.FinishedUtc = DateTime.UtcNow;
+            Finish(job, "error");
         }
         finally
         {
@@ -395,30 +308,20 @@ public class SubtitleService
         static string fmt(double s) => TimeSpan.FromSeconds(s).ToString(@"hh\:mm\:ss");
     }
 
-    internal static List<SubtitleCue> MergeRange(List<SubtitleCue> existing, IEnumerable<SubtitleCue> incoming, double start, double end, bool replace)
+    private static void Finish(GenerationJob job, string status)
     {
-        var result = replace
-            ? existing.Where(c => c.End <= start + 0.01 || c.Start >= end - 0.01).ToList()
-            : existing.ToList();
-
-        foreach (var c in incoming)
+        job.Status = status;
+        job.FinishedUtc = DateTime.UtcNow;
+        if (status == "done")
         {
-            if (string.IsNullOrWhiteSpace(c.Text))
-            {
-                continue;
-            }
-
-            var dup = result.Any(e => Math.Abs(e.Start - c.Start) < 0.25 && string.Equals(e.Text, c.Text, StringComparison.Ordinal));
-            if (!dup)
-            {
-                result.Add(c);
-            }
+            job.Progress = 1;
+            job.Stage = "Done";
         }
 
-        return result.OrderBy(c => c.Start).ThenBy(c => c.End).ToList();
+        job.Completion.TrySetResult();
     }
 
-    private async Task<List<SubtitleCue>> TranslateCuesWithContextAsync(
+    private async Task<List<SubtitleCue>> TranslateCuesAsync(
         List<SubtitleCue> cues, string targetLanguage,
         List<(string Src, string Dst)> context, int ctxMax, CancellationToken ct)
     {
@@ -463,14 +366,13 @@ public class SubtitleService
         var cues = _store.LoadSourceCues(itemId);
         if (cues.Count == 0)
         {
-            throw new FileNotFoundException("No source subtitles yet — select the 'LM Subtitles' track to start transcription");
+            throw new FileNotFoundException("No source subtitles cached for this item");
         }
 
         var context = new List<(string Src, string Dst)>();
-        var translated = await TranslateCuesWithContextAsync(cues, lang, context, Math.Clamp(config.ContextPairs, 0, 30), ct).ConfigureAwait(false);
+        var translated = await TranslateCuesAsync(cues, lang, context, Math.Clamp(config.ContextPairs, 0, 30), ct).ConfigureAwait(false);
         _store.SaveCues(itemId, lang, translated);
-        _store.Render(itemId, null, translated: true, live: false, lang, translated);
-        _store.Render(itemId, null, translated: true, live: true, lang, translated);
+        _store.Render(itemId, translated: true, lang, translated);
         return SubtitleText.ToSrt(translated);
     }
 }

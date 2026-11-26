@@ -4,65 +4,59 @@
 
 English | [简体中文](README.zh_cn.md)
 
-Jellyfin plugin for **ASR speech-to-text + LLM subtitle translation**.
+Jellyfin plugin for **ASR speech-to-text + LLM subtitle translation** (OpenAI-compatible APIs).
 
-Subtitle tracks:
-
-- **LM Subtitles**: best-effort transcription + translation from the **current playback position**: current position first, then forward to the end, then back to cover the beginning; already-generated ranges are served straight from the on-disk cache.
-- **LM Subtitles (Live)**: **re-calls the API** from the current position and **overwrites** the old subtitles in that time range.
+Works exactly like OpenSubtitles: **content first → track appears → user selects last**.
+Search and download the "LM Subtitles" entry in the item's **Edit Subtitles** dialog; the
+server transcribes and translates the whole video, then the finished subtitle is saved and
+shows up in every client's subtitle list. Completed results are cached forever — downloading
+again never re-calls the API.
 
 ## 1. How it works
 
 ```
-Select the "LM Subtitles" track (any client)
-        │  PlaybackStart / PlaybackProgress / UserDataSaved events
+Item details → ⋮ menu → Edit Subtitles
+        │  search: POST Items/{id}/RemoteSearch/Subtitles/{lang}
         ▼
-LmPlaybackMonitor ──detects selected LM track + position──► SubtitleService
+LmSubtitleProvider.Search() ──returns one "LM Subtitles" candidate──► dialog list
         │
-        ▼  chunks of ChunkSeconds (default 600s), current position first
+        │  download: POST Items/{id}/RemoteSearch/Subtitles/{subtitleId}
+        ▼
+LmSubtitleProvider.GetSubtitles(id)
+        │  full sequential pipeline (0 → end, chunks of ChunkSeconds, default 600s)
+        ▼
 ffmpeg extracts 16 kHz mp3 ──► /audio/transcriptions (ASR)
         │                              │
         ▼                              ▼
    source cues.json           /chat/completions (LLM, rolling context)
                                        │
                                        ▼
-                     merge into cache → render .srt (the file the track points at)
+                     complete SRT returned → Jellyfin SubtitleManager
+                     saves it (media dir / metadata dir) → registers external stream
                                        │
                                        ▼
-                     player re-fetches subtitle → sees the grown file
+                     new track in any client's subtitle list → select → full display
 ```
 
 ## 2. Design notes & limitations
 
-- **Subtitle refresh granularity**: Jellyfin clients do not poll a loaded external
-  subtitle; generation is async, so the grown file is only picked up on the player's
-  next fetch (seek / re-select / HLS segment). This is the inherent trade-off of the
-  pure native approach — in exchange for zero injection and all-client compatibility.
-- Live-track triggering relies on clients reporting playback events (all official
-  clients do). For third-party players that don't report progress, drive it manually
-  via `POST /LmSubs/Generate {live:true, position:...}`.
+- **Full generation, no realtime**: the subtitle only appears after the whole video is
+  processed (same experience as downloading an OpenSubtitles entry). A movie typically
+  takes a few minutes, depending on ASR/LLM speed and chunk settings.
+- **The download request waits for generation**: if a reverse proxy times out (e.g. nginx's
+  default 60 s) and drops the connection, the background job is unaffected and keeps running;
+  the subtitle is still saved and registered when done — refresh the subtitle list later.
+- Completed results are cached forever: searching/downloading again returns the cache without
+  any API calls. To force a redo use REST `POST /LmSubs/Generate {restart:true}`.
 - ASR services without timestamps (plain text only) still work: the text is spread
   proportionally across the chunk's time range — less precise, but usable.
-- Translation uses a numbered JSON map (`{"1":"..."}`), falling back to numbered
-  lines and then line-by-line requests; lines are never dropped.
-- One pipeline per video at a time; a new trigger cancels the previous run. Completed
-  ranges of "LM Subtitles" are never redone.
-- API keys are stored in plain text in the plugin configuration XML (same as other
-  Jellyfin plugins) — mind the file permissions.
-- Tracks are re-installed automatically after library refreshes; if they are missing
-  from the list, play the video once or call the Install endpoint.
-- The two tracks are **real external subtitle MediaStreams** persisted in Jellyfin's
-  database (`IItemRepository.SaveMediaStreams`), pointing at `.srt` files in the plugin
-  cache (empty at first). Jellyfin serves them through its native external-subtitle
-  route — no proxy, no hooks, no web injection.
-- Tracks are installed lazily on first playback of any video. Library scans rebuild
-  the stream list, so the plugin listens to `RefreshCompleted` and re-installs them.
-  Manual repair: `POST /LmSubs/Install/{itemId}`.
-- Live-track triggering: once on selection; during playback again when the position
-  jumps more than 20 s (seek) or 60 s have passed since the last trigger.
-- **Subtitles are not pushed**: a loaded subtitle is a snapshot. To see newly generated
-  parts immediately, nudge the seek bar (or toggle the subtitle off/on). HLS transcoded
-  playback loads subtitles per segment automatically.
+- Translation uses a numbered JSON map (`{"1":"..."}`), falling back to numbered lines and
+  then line-by-line requests; lines are never dropped.
+- One pipeline per video at a time; repeated triggers return the running job.
+- API keys are stored in plain text in the plugin configuration XML (same as other Jellyfin
+  plugins) — mind the file permissions.
+- Where the subtitle file lands is decided by Jellyfin's library option "Save subtitles with
+  media" (media dir or internal metadata dir) — identical to OpenSubtitles downloads.
 
 ## 3. Requirements
 
@@ -85,33 +79,34 @@ Dashboard → Plugins → **LMSubs**: configure API Key, Model, etc.
 
 ### 4.2 Use
 
-Play any video → pick **LM Subtitles** (or **LM Subtitles (Live)**) in the subtitle selector
+Item details → ⋮ menu → **Edit Subtitles** → pick a language → Search →
+click the download button next to the "LM Subtitles" entry.
 
-First selection installs the tracks and starts generation
+When generation finishes (a few minutes), the subtitle appears in the item's subtitle list,
+selectable from any client.
 
 ## 5. REST API (optional; scripts / debugging / external players)
 
 All endpoints live under `/LmSubs` (auth via `X-Emby-Token`, except subtitle download):
 
-| Method | Path                                                                   | Description                                                             |
-| ------ | ---------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| POST   | `/LmSubs/Generate`                                                     | `{itemId, position?, live?, translate?, targetLanguage?}` start/resume the pipeline |
-| GET    | `/LmSubs/Status/{itemId}`                                              | status/progress (`queued/running/done/error/cancelled`)                 |
-| POST   | `/LmSubs/Cancel/{itemId}`                                              | cancel                                                                  |
-| POST   | `/LmSubs/Install/{itemId}`                                             | install/repair the two subtitle tracks                                  |
-| POST   | `/LmSubs/Translate`                                                    | `{itemId, targetLanguage?}` translate the cached source only            |
-| GET    | `/LmSubs/Subtitles/{itemId}?mode=cached\|live\|source&format=vtt\|srt` | download subtitles (anonymous)                                          |
-| POST   | `/LmSubs/Test`                                                         | connectivity test for both endpoints                                    |
+| Method | Path                                                                 | Description                                                        |
+| ------ | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| POST   | `/LmSubs/Generate`                                                   | `{itemId, translate?, targetLanguage?, restart?}` start full generation |
+| GET    | `/LmSubs/Status/{itemId}`                                            | status/progress (`queued/running/done/error/cancelled`)            |
+| POST   | `/LmSubs/Cancel/{itemId}`                                            | cancel                                                             |
+| POST   | `/LmSubs/Translate`                                                  | `{itemId, targetLanguage?}` translate the cached source only       |
+| GET    | `/LmSubs/Subtitles/{itemId}?mode=translated\|source&format=vtt\|srt` | download subtitles (anonymous)                                     |
+| POST   | `/LmSubs/Test`                                                       | connectivity test for both endpoints                               |
 
 Cache location: `<data dir>/plugins/lmsubs/cache/<itemId>/`
-(`cues.*.json` is the source of truth; `translated.<lang>.srt` / `live.<lang>.srt` are
-the track files; `source.srt` is the raw transcript).
+(`cues.*.json` is the source of truth; `translated.<lang>.srt` is the finished subtitle;
+`source.srt` is the raw transcript).
 
 ## 6. Development
 
 ```bash
 dotnet build          # net8.0 + Jellyfin.Controller 10.10.7
-dotnet test           # parsing / timing / translation-map / merge unit tests
+dotnet test           # parsing / timing / translation-map unit tests
 ./scripts/package.sh  # build the installable zip
 ```
 
@@ -122,11 +117,9 @@ Jellyfin.Plugin.LmSubs/
 ├── Configuration/               # config model, provider presets, config page (html + ES-module controller)
 ├── Api/LmSubsController.cs      # optional REST API
 ├── Providers/
-│   ├── LmTrackInstaller.cs      # persists the two LM tracks as media streams
-│   └── LmSubtitleProvider.cs    # ISubtitleProvider (lmsubs:// id resolution)
+│   └── LmSubtitleProvider.cs    # ISubtitleProvider: Search candidate + GetSubtitles full generation
 └── Services/
-    ├── LmPlaybackMonitor.cs     # playback events → track detection → pipeline trigger
-    ├── SubtitleService.cs       # position-first chunk pipeline / overwrite merge / job control
+    ├── SubtitleService.cs       # full sequential pipeline / job control / completion signal
     ├── SubtitleStore.cs         # cues.json + rendered .srt cache
     ├── OpenAiClient.cs          # /audio/transcriptions + /chat/completions
     ├── AudioExtractor.cs        # ffmpeg chunking / ffprobe duration

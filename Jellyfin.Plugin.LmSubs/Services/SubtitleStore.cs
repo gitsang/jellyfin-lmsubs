@@ -3,6 +3,8 @@ using MediaBrowser.Common.Configuration;
 
 namespace Jellyfin.Plugin.LmSubs.Services;
 
+// Per-item cache: cues.json is the source of truth (persisted after every chunk);
+// .srt files are rendered views served by the REST API and the subtitle provider.
 public class SubtitleStore
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
@@ -56,90 +58,27 @@ public class SubtitleStore
         File.WriteAllText(CuesPath(itemId, lang), JsonSerializer.Serialize(list));
     }
 
-    public List<SubtitleCue> MergeCues(Guid itemId, string lang, IEnumerable<SubtitleCue> newCues)
-    {
-        var all = LoadCues(itemId, lang);
-        foreach (var c in newCues)
-        {
-            if (string.IsNullOrWhiteSpace(c.Text))
-            {
-                continue;
-            }
-
-            var dup = all.Any(e => Math.Abs(e.Start - c.Start) < 0.25 &&
-                                   string.Equals(e.Text, c.Text, StringComparison.Ordinal));
-            if (!dup)
-            {
-                all.Add(c);
-            }
-        }
-
-        all = all.OrderBy(c => c.Start).ThenBy(c => c.End).ToList();
-        SaveCues(itemId, lang, all);
-        return all;
-    }
-
     public List<SubtitleCue> LoadSourceCues(Guid itemId) => LoadCues(itemId, "source");
 
     public void SaveSourceCues(Guid itemId, IEnumerable<SubtitleCue> cues) => SaveCues(itemId, "source", cues);
 
-    public static string SidecarPath(string mediaPath, bool live, string lang)
+    public string CacheSrtPath(Guid itemId, bool translated, string lang) =>
+        Path.Combine(ItemDir(itemId), !translated ? "source.srt" : $"translated.{LangSlug(lang)}.srt");
+
+    public void Render(Guid itemId, bool translated, string lang, IEnumerable<SubtitleCue> cues)
     {
-        var dir = Path.GetDirectoryName(mediaPath) ?? ".";
-        var name = Path.GetFileNameWithoutExtension(mediaPath);
-        return Path.Combine(dir, $"{name}.{LangSlug(lang)}.lmsubs{(live ? "-live" : string.Empty)}.srt");
+        File.WriteAllText(CacheSrtPath(itemId, translated, lang), SubtitleText.ToSrt(cues));
     }
 
-    public string CacheSrtPath(Guid itemId, bool translated, bool live, string lang) =>
-        Path.Combine(ItemDir(itemId),
-            !translated ? "source.srt" : live ? $"live.{LangSlug(lang)}.srt" : $"translated.{LangSlug(lang)}.srt");
-
-    public void Render(Guid itemId, string? mediaPath, bool translated, bool live, string lang, IEnumerable<SubtitleCue> cues)
+    public string? GetSrt(Guid itemId, bool translated, string lang)
     {
-        var list = cues as List<SubtitleCue> ?? cues.ToList();
-        var srt = SubtitleText.ToSrt(list);
-        File.WriteAllText(CacheSrtPath(itemId, translated, live, lang), srt);
-        if (!string.IsNullOrEmpty(mediaPath))
-        {
-            TryWriteSidecar(SidecarPath(mediaPath, live, lang), srt);
-        }
-    }
-
-    public void EnsureSidecars(Guid itemId, string mediaPath, string lang)
-    {
-        foreach (var live in new[] { false, true })
-        {
-            var path = SidecarPath(mediaPath, live, lang);
-            if (!File.Exists(path))
-            {
-                var cache = CacheSrtPath(itemId, true, live, lang);
-                var srt = File.Exists(cache) ? File.ReadAllText(cache) : string.Empty;
-                TryWriteSidecar(path, srt);
-            }
-        }
-    }
-
-    private static void TryWriteSidecar(string path, string content)
-    {
-        try
-        {
-            File.WriteAllText(path, content);
-        }
-        catch
-        {
-            // read-only media dir — cache copy still works via the REST API
-        }
-    }
-
-    public string? GetSrt(Guid itemId, bool translated, string lang, bool live = false)
-    {
-        var file = CacheSrtPath(itemId, translated, live, lang);
+        var file = CacheSrtPath(itemId, translated, lang);
         return File.Exists(file) ? File.ReadAllText(file) : null;
     }
 
-    public string? GetVtt(Guid itemId, bool translated, string lang, bool live = false)
+    public string? GetVtt(Guid itemId, bool translated, string lang)
     {
-        var srt = GetSrt(itemId, translated, lang, live);
+        var srt = GetSrt(itemId, translated, lang);
         return srt == null ? null : SubtitleText.ToVtt(SubtitleText.ParseSrt(srt));
     }
 }
