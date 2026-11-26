@@ -82,6 +82,10 @@ Dashboard → Plugins → **LMSubs**: configure API Key, Model, etc.
 Item details → ⋮ menu → **Edit Subtitles** → pick a language → Search →
 click the download button next to the "LM Subtitles" entry.
 
+The language you pick in the search dialog **is the translation target** — there is no
+target-language setting. The entry's description shows the ASR/translation models and the
+target language; **search again while generating to see live progress percentages**.
+
 When generation finishes (a few minutes), the subtitle appears in the item's subtitle list,
 selectable from any client.
 

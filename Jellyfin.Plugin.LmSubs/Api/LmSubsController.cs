@@ -80,8 +80,7 @@ public class LmSubsController : ControllerBase
         [FromQuery] string? lang = null,
         [FromQuery] string format = "vtt")
     {
-        var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
-        var targetLang = lang ?? config.TargetLanguage;
+        var targetLang = SubtitleService.NormalizeTargetLanguage(lang);
         var translated = !string.Equals(mode, "source", StringComparison.OrdinalIgnoreCase);
 
         if (string.Equals(format, "srt", StringComparison.OrdinalIgnoreCase))
@@ -116,6 +115,8 @@ public class LmSubsController : ControllerBase
         ["status"] = job.Status,
         ["stage"] = job.Stage,
         ["progress"] = Math.Round(job.Progress, 3),
+        ["asrProgress"] = Math.Round(job.AsrProgress, 3),
+        ["translateProgress"] = Math.Round(job.TranslateProgress, 3),
         ["error"] = job.Error,
         ["targetLanguage"] = job.TargetLanguage,
         ["startedUtc"] = job.StartedUtc,

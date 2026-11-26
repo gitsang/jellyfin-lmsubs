@@ -1,3 +1,4 @@
+using Jellyfin.Plugin.LmSubs.Providers;
 using Jellyfin.Plugin.LmSubs.Services;
 using Xunit;
 
@@ -133,5 +134,37 @@ public class ParsingTests
         var cues = SubtitleText.Normalize(new[] { new AsrSegment(10, 30, text) });
         Assert.True(cues.Count > 1);
         Assert.All(cues, c => Assert.DoesNotContain("wor ", c.Text + " "));
+    }
+
+    [Fact]
+    public void TargetLanguage_IsoCodesMapped()
+    {
+        Assert.Equal("Chinese (Simplified)", SubtitleService.NormalizeTargetLanguage("chi"));
+        Assert.Equal("Chinese (Simplified)", SubtitleService.NormalizeTargetLanguage("zh"));
+        Assert.Equal("Chinese (Traditional)", SubtitleService.NormalizeTargetLanguage("zh-tw"));
+        Assert.Equal("English", SubtitleService.NormalizeTargetLanguage("eng"));
+        Assert.Equal("Japanese", SubtitleService.NormalizeTargetLanguage("ja"));
+        Assert.Equal("Klingon", SubtitleService.NormalizeTargetLanguage("Klingon"));
+        Assert.Equal("Chinese (Simplified)", SubtitleService.NormalizeTargetLanguage(null));
+    }
+
+    [Fact]
+    public void SubtitleId_RoundTrips()
+    {
+        var id = Guid.NewGuid();
+        var built = LmSubtitleProvider.BuildId(id, "chi", true);
+        var (parsed, lang, translate) = LmSubtitleProvider.ParseId(built);
+        Assert.Equal(id, parsed);
+        Assert.Equal("chi", lang);
+        Assert.True(translate);
+
+        var (_, lang2, translate2) = LmSubtitleProvider.ParseId(LmSubtitleProvider.BuildId(id, "eng", false));
+        Assert.Equal("eng", lang2);
+        Assert.False(translate2);
+
+        // Legacy bare-guid id still parses.
+        var (parsed3, _, _) = LmSubtitleProvider.ParseId(id.ToString("N"));
+        Assert.Equal(id, parsed3);
+        Assert.Equal(Guid.Empty, LmSubtitleProvider.ParseId("garbage").ItemId);
     }
 }

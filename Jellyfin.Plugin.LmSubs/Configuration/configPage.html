@@ -25,10 +25,11 @@
                         Base URL is left empty), or choose <em>OpenAI Compatible (custom)</em> and enter any
                         endpoint up to <code>/v1</code> — the plugin appends
                         <code>/audio/transcriptions</code> and <code>/chat/completions</code> automatically.</p>
-                    <p>Works like OpenSubtitles: item menu → <b>Edit Subtitles</b> → search → download the
-                        <b>LM Subtitles</b> entry. The server then transcribes and translates the whole video;
-                        when finished, the subtitle is saved and appears in every client's subtitle selector.
-                        Completed results are cached — downloading again never re-calls the API.</p>
+                    <p>Works like OpenSubtitles: item menu → <b>Edit Subtitles</b> → pick a language (it becomes
+                        the translation target) → search → download the <b>LM Subtitles</b> entry. The server then
+                        transcribes and translates the whole video; when finished, the subtitle is saved and appears
+                        in every client's subtitle selector. Completed results are cached — downloading again never
+                        re-calls the API. While generating, search again to see progress in the entry's description.</p>
                 </div>
 
                 <div class="lmsubs-columns">
@@ -80,10 +81,7 @@
                             <input is="emby-input" type="text" id="TranslateModel" label="Model" />
                             <div class="fieldDescription">e.g. gpt-4o-mini, deepseek-chat, Qwen/Qwen2.5-7B-Instruct</div>
                         </div>
-                        <div class="inputContainer">
-                            <input is="emby-input" type="text" id="TargetLanguage" label="Target language" />
-                            <div class="fieldDescription">e.g. Chinese (Simplified) / English / Japanese</div>
-                        </div>
+                        <div class="fieldDescription">The translation target language is whatever language you pick in the Edit Subtitles search dialog.</div>
                         <div class="inputContainer">
                             <input is="emby-input" type="number" id="ContextPairs" min="0" max="30" label="Context pairs" />
                             <div class="fieldDescription">Keep the last N "source → translation" pairs as chat context so names and terminology stay consistent. 0 = off.</div>

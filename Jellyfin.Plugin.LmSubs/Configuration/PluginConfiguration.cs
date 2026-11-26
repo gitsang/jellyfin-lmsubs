@@ -29,8 +29,6 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public string TranslateModel { get; set; } = "gpt-4o-mini";
 
-    public string TargetLanguage { get; set; } = "Chinese (Simplified)";
-
     public int ContextPairs { get; set; } = 8;
 
     public int TranslateBatchSize { get; set; } = 20;

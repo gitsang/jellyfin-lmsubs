@@ -76,6 +76,9 @@ https://raw.githubusercontent.com/gitsang/jellyfin-lmsubs/main/manifest.json
 媒体详情页 → ⋮ 菜单 → **编辑字幕（Edit Subtitles）** → 选语言 → 搜索 →
 点「LM Subtitles」条目旁的下载按钮。
 
+搜索时选的语言**就是翻译目标语言**——不再有目标语言设置项。条目描述里会显示
+ASR/翻译模型和目标语言；**生成过程中再次搜索，可以看到实时进度百分比**。
+
 生成完成后（几分钟），字幕出现在该媒体的字幕列表里，任意客户端选中即可。
 
 ## 5. REST API（可选；供脚本 / 调试 / 外部播放器）

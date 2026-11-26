@@ -18,6 +18,10 @@ public class GenerationJob
 
     public double Progress { get; set; }
 
+    public double AsrProgress { get; set; }
+
+    public double TranslateProgress { get; set; }
+
     public string? Error { get; set; }
 
     public DateTime StartedUtc { get; } = DateTime.UtcNow;
@@ -44,7 +48,7 @@ public class SubtitleService
     private readonly AudioExtractor _extractor;
     private readonly ILogger<SubtitleService> _logger;
 
-    private readonly ConcurrentDictionary<Guid, GenerationJob> _jobs = new();
+    private readonly ConcurrentDictionary<(Guid ItemId, string Lang), GenerationJob> _jobs = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _itemLocks = new();
 
     public SubtitleService(
@@ -97,6 +101,36 @@ public class SubtitleService
         return item?.Id ?? Guid.Empty;
     }
 
+    // Search dialog language (ISO code like "chi"/"zh" or a display name) -> prompt-friendly name.
+    public static string NormalizeTargetLanguage(string? language)
+    {
+        var l = (language ?? string.Empty).Trim();
+        if (l.Length == 0)
+        {
+            return "Chinese (Simplified)";
+        }
+
+        return l.ToLowerInvariant() switch
+        {
+            "chi" or "zho" or "zh" or "zh-cn" or "zh-hans" => "Chinese (Simplified)",
+            "zh-tw" or "zh-hk" or "zh-hant" => "Chinese (Traditional)",
+            "eng" or "en" => "English",
+            "jpn" or "ja" => "Japanese",
+            "kor" or "ko" => "Korean",
+            "fre" or "fra" or "fr" => "French",
+            "ger" or "deu" or "de" => "German",
+            "spa" or "es" => "Spanish",
+            "rus" or "ru" => "Russian",
+            "ita" or "it" => "Italian",
+            "por" or "pt" => "Portuguese",
+            "ara" or "ar" => "Arabic",
+            "tha" or "th" => "Thai",
+            "vie" or "vi" => "Vietnamese",
+            "und" => "Chinese (Simplified)",
+            _ => l
+        };
+    }
+
     public static string ThreeLetterLanguage(string language)
     {
         var l = (language ?? string.Empty).ToLowerInvariant();
@@ -143,30 +177,42 @@ public class SubtitleService
         return "und";
     }
 
-    public GenerationJob? GetJob(Guid itemId) => _jobs.TryGetValue(itemId, out var j) ? j : null;
+    public GenerationJob? GetJob(Guid itemId, string? targetLanguage = null)
+    {
+        if (targetLanguage != null)
+        {
+            return _jobs.TryGetValue((itemId, SubtitleStore.LangSlug(targetLanguage)), out var j) ? j : null;
+        }
+
+        return _jobs.Where(kv => kv.Key.ItemId == itemId)
+            .OrderByDescending(kv => kv.Value.StartedUtc)
+            .Select(kv => kv.Value)
+            .FirstOrDefault();
+    }
 
     public bool Cancel(Guid itemId)
     {
-        if (_jobs.TryGetValue(itemId, out var job) && job.Status is "queued" or "running")
+        var cancelled = false;
+        foreach (var kv in _jobs.Where(kv => kv.Key.ItemId == itemId && kv.Value.Status is "queued" or "running"))
         {
-            job.Cts.Cancel();
-            return true;
+            kv.Value.Cts.Cancel();
+            cancelled = true;
         }
 
-        return false;
+        return cancelled;
     }
 
     public GenerationJob EnsureRunning(Guid itemId, bool translate = true, string? targetLanguage = null, bool restart = false)
     {
-        var config = Config;
-        var lang = string.IsNullOrWhiteSpace(targetLanguage) ? config.TargetLanguage : targetLanguage!;
+        var lang = NormalizeTargetLanguage(targetLanguage);
+        var key = (itemId, translate ? SubtitleStore.LangSlug(lang) : "source");
 
         // Serialize job control per item; requests may arrive concurrently.
         var controlLock = _itemLocks.GetOrAdd(itemId, _ => new SemaphoreSlim(1, 1));
         controlLock.Wait();
         try
         {
-            if (_jobs.TryGetValue(itemId, out var existing))
+            if (_jobs.TryGetValue(key, out var existing))
             {
                 if (existing.Status is "queued" or "running")
                 {
@@ -192,7 +238,7 @@ public class SubtitleService
                 ItemName = GetVideo(itemId).Name ?? itemId.ToString()
             };
 
-            _jobs[itemId] = job;
+            _jobs[key] = job;
             _ = Task.Run(() => RunPipelineAsync(job, path, duration));
             return job;
         }
@@ -216,7 +262,8 @@ public class SubtitleService
         }
 
         // A newer job may have superseded this one while we waited for the lock.
-        if (job.Cts.IsCancellationRequested || !ReferenceEquals(GetJob(job.ItemId), job))
+        if (job.Cts.IsCancellationRequested ||
+            !ReferenceEquals(GetJob(job.ItemId, job.Translate ? job.TargetLanguage : "source"), job))
         {
             itemLock.Release();
             Finish(job, "cancelled");
@@ -269,11 +316,12 @@ public class SubtitleService
                 }
 
                 var cues = SubtitleText.Normalize(segments);
+                job.AsrProgress = (double)(i + 1) / chunkCount;
                 if (cues.Count > 0)
                 {
                     sourceCues.AddRange(cues);
                     var chunkFinal = job.Translate
-                        ? await TranslateCuesAsync(cues, job.TargetLanguage, context, ctxMax, ct).ConfigureAwait(false)
+                        ? await TranslateCuesAsync(cues, job.TargetLanguage, context, ctxMax, ct, job).ConfigureAwait(false)
                         : cues;
                     finalCues.AddRange(chunkFinal);
 
@@ -282,10 +330,11 @@ public class SubtitleService
                     _store.SaveCues(job.ItemId, job.TargetLanguage, finalCues);
                 }
 
+                job.TranslateProgress = job.AsrProgress;
                 job.Progress = (double)(i + 1) / chunkCount;
             }
 
-            _store.Render(job.ItemId, translated: true, job.TargetLanguage, finalCues);
+            _store.Render(job.ItemId, job.Translate, job.TargetLanguage, finalCues);
             _logger.LogInformation("LMSubs: generated {Count} cues for {Item}", finalCues.Count, job.ItemName);
             Finish(job, "done");
         }
@@ -323,7 +372,8 @@ public class SubtitleService
 
     private async Task<List<SubtitleCue>> TranslateCuesAsync(
         List<SubtitleCue> cues, string targetLanguage,
-        List<(string Src, string Dst)> context, int ctxMax, CancellationToken ct)
+        List<(string Src, string Dst)> context, int ctxMax, CancellationToken ct,
+        GenerationJob? job = null)
     {
         var config = Config;
         var batchSize = Math.Clamp(config.TranslateBatchSize, 1, 100);
@@ -335,6 +385,14 @@ public class SubtitleService
             var batch = cues.Skip(offset).Take(batchSize).ToList();
             var texts = batch.Select(c => c.Text).ToList();
             var translations = await _openAi.TranslateBatchAsync(texts, context, targetLanguage, config, ct).ConfigureAwait(false);
+
+            if (job != null)
+            {
+                // Translate lags ASR by at most the current chunk; interpolate within it.
+                var done = Math.Min(offset + batch.Count, cues.Count);
+                var chunkSpan = job.AsrProgress - job.TranslateProgress;
+                job.TranslateProgress = job.TranslateProgress + chunkSpan * done / cues.Count;
+            }
 
             for (var i = 0; i < batch.Count; i++)
             {
@@ -362,7 +420,7 @@ public class SubtitleService
     public async Task<string> TranslateCachedAsync(Guid itemId, string? targetLanguage, CancellationToken ct)
     {
         var config = Config;
-        var lang = string.IsNullOrWhiteSpace(targetLanguage) ? config.TargetLanguage : targetLanguage!;
+        var lang = NormalizeTargetLanguage(targetLanguage);
         var cues = _store.LoadSourceCues(itemId);
         if (cues.Count == 0)
         {

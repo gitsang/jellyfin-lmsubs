@@ -21,7 +21,7 @@ const PROVIDERS = [
 
 const TEXT_FIELDS = [
     'AsrBaseUrl', 'AsrApiKey', 'AsrModel', 'AsrLanguage', 'AsrPrompt',
-    'TranslateBaseUrl', 'TranslateApiKey', 'TranslateModel', 'TargetLanguage',
+    'TranslateBaseUrl', 'TranslateApiKey', 'TranslateModel',
     'TranslateExtraPrompt', 'FfmpegPath'
 ];
 const NUM_FIELDS = [
