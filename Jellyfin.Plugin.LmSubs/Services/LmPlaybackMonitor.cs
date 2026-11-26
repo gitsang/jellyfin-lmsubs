@@ -12,13 +12,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LmSubs.Services;
 
-/// <summary>
-/// Watches playback sessions. When a user selects an LM subtitle track (reported by
-/// every Jellyfin client via PlaybackStart / PlaybackProgress), this kicks off the
-/// ASR + translation pipeline prioritized at the current playback position — the
-/// "select the empty subtitle → it starts filling itself" trigger, with no web
-/// modification. Also installs the LM tracks lazily on first playback of any video.
-/// </summary>
 public sealed class LmPlaybackMonitor : IHostedService
 {
     private readonly ISessionManager _sessionManager;
@@ -29,7 +22,6 @@ public sealed class LmPlaybackMonitor : IHostedService
     private readonly SubtitleService _service;
     private readonly ILogger<LmPlaybackMonitor> _logger;
 
-    // live mode: re-trigger when the position jumps (seek) or after a stale period
     private readonly ConcurrentDictionary<Guid, (double Position, DateTime TriggeredUtc)> _liveTriggers = new();
 
     public LmPlaybackMonitor(
@@ -70,8 +62,7 @@ public sealed class LmPlaybackMonitor : IHostedService
 
     private void OnRefreshCompleted(object? sender, GenericEventArgs<BaseItem> e)
     {
-        // Library scans rebuild MediaStreams from disk and wipe our injected tracks;
-        // put them back after every refresh.
+        // Library scans rebuild MediaStreams from disk and wipe our injected tracks.
         try
         {
             if (e.Argument is Video video && Plugin.Instance != null)
@@ -108,8 +99,6 @@ public sealed class LmPlaybackMonitor : IHostedService
 
             var config = Plugin.Instance.Configuration;
 
-            // Lazily install LM tracks on first playback so every video gets them
-            // without a full library rescan.
             LmTrackInstaller.EnsureTracks(video, _itemRepo, _service.Store, config.TargetLanguage, _logger);
 
             if (!LmTrackInstaller.TryIdentify(_itemRepo, video.Id, subtitleStreamIndex, out var live))
@@ -122,13 +111,10 @@ public sealed class LmPlaybackMonitor : IHostedService
 
             if (!live)
             {
-                // cached mode: resume/complete only what's missing; no-op when done
                 _service.EnsureRunning(video.Id, position, force: false);
                 return;
             }
 
-            // live mode: trigger on selection, on seeks (>20s jump), and periodically
-            // while playing so the file keeps extending ahead of the position.
             var now = DateTime.UtcNow;
             var shouldTrigger = true;
             if (_liveTriggers.TryGetValue(video.Id, out var last))

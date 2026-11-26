@@ -3,11 +3,6 @@ using MediaBrowser.Common.Configuration;
 
 namespace Jellyfin.Plugin.LmSubs.Services;
 
-/// <summary>
-/// Per-item subtitle cache. cues.json is the source of truth (partial results are
-/// persisted after every chunk); .srt / .lm.srt files are rendered views that double
-/// as the real external subtitle files Jellyfin serves to clients.
-/// </summary>
 public class SubtitleStore
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
@@ -33,8 +28,6 @@ public class SubtitleStore
             .Replace((lang ?? string.Empty).Trim().ToLowerInvariant(), "[^a-z0-9\\u4e00-\\u9fff]+", "-").Trim('-');
         return slug.Length == 0 ? "default" : slug;
     }
-
-    // ---------------- cues (source of truth) ----------------
 
     private string CuesPath(Guid itemId, string lang) =>
         Path.Combine(ItemDir(itemId), $"cues.{LangSlug(lang)}.json");
@@ -63,7 +56,6 @@ public class SubtitleStore
         File.WriteAllText(CuesPath(itemId, lang), JsonSerializer.Serialize(list));
     }
 
-    /// <summary>Merge cues (dedupe near-identical start+text), keep sorted, persist.</summary>
     public List<SubtitleCue> MergeCues(Guid itemId, string lang, IEnumerable<SubtitleCue> newCues)
     {
         var all = LoadCues(itemId, lang);
@@ -91,9 +83,6 @@ public class SubtitleStore
 
     public void SaveSourceCues(Guid itemId, IEnumerable<SubtitleCue> cues) => SaveCues(itemId, "source", cues);
 
-    // ---------------- rendered SRT files ----------------
-
-    /// <summary>Rendered file next to the media (picked up by library scans).</summary>
     public static string SidecarPath(string mediaPath, bool live, string lang)
     {
         var dir = Path.GetDirectoryName(mediaPath) ?? ".";
@@ -101,12 +90,10 @@ public class SubtitleStore
         return Path.Combine(dir, $"{name}.{LangSlug(lang)}.lmsubs{(live ? "-live" : string.Empty)}.srt");
     }
 
-    /// <summary>Rendered file in the plugin cache (REST API / fallback delivery).</summary>
     public string CacheSrtPath(Guid itemId, bool translated, bool live, string lang) =>
         Path.Combine(ItemDir(itemId),
             !translated ? "source.srt" : live ? $"live.{LangSlug(lang)}.srt" : $"translated.{LangSlug(lang)}.srt");
 
-    /// <summary>Write SRT views (cache always; sidecar when the media dir is writable).</summary>
     public void Render(Guid itemId, string? mediaPath, bool translated, bool live, string lang, IEnumerable<SubtitleCue> cues)
     {
         var list = cues as List<SubtitleCue> ?? cues.ToList();

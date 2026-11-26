@@ -1,107 +1,144 @@
 <div id="LmSubsConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
      data-controller="__plugin/LmSubsConfigJs"
      data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <style>
+        .lmsubs-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0 2.5em;
+            align-items: start;
+        }
+        .lmsubs-advanced {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 0 2em;
+        }
+        @media (max-width: 60em) {
+            .lmsubs-columns, .lmsubs-advanced {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
     <div data-role="content">
         <div class="content-primary">
             <form id="LmSubsConfigForm">
                 <div class="sectionTitleContainer flex align-items-center">
-                    <h2 class="sectionTitle">LMSubs — ASR 语音转写 &amp; LLM 字幕翻译</h2>
+                    <h2 class="sectionTitle">LMSubs — ASR Transcription &amp; LLM Subtitle Translation</h2>
                 </div>
                 <div class="verticalSection">
-                    <p>所有接口均为 OpenAI Compatible：Base URL 填到 <code>/v1</code> 即可（插件自动拼接
-                        <code>/audio/transcriptions</code> 与 <code>/chat/completions</code>，填完整 endpoint 也兼容）。</p>
-                    <p>无需修改 Web：插件会在视频的字幕列表里加入两条字幕轨——
-                        <b>「LM 字幕」</b>（选择即从当前播放位置开始转写＋翻译，已生成的部分直接用缓存，全部完成后不再调 API）和
-                        <b>「LM 字幕（实时）」</b>（每次选择/拖动进度都重新转写并覆盖）。
-                        在任意客户端的字幕选择器里选中即可，字幕会随生成逐步补齐（拖动一下进度条可立即刷新）。</p>
+                    <p>Both stages use OpenAI-compatible APIs. Pick a provider (its default URL is used when
+                        Base URL is left empty), or choose <em>OpenAI Compatible (custom)</em> and enter any
+                        endpoint up to <code>/v1</code> — the plugin appends
+                        <code>/audio/transcriptions</code> and <code>/chat/completions</code> automatically.</p>
+                    <p>No web modification needed: the plugin adds two subtitle tracks to every video —
+                        <b>LM Subtitles</b> (selecting it starts transcription + translation from the current
+                        playback position, reusing cached results; once the whole video is done no API calls
+                        are made) and <b>LM Subtitles (Live)</b> (always re-transcribes and overwrites).
+                        Pick one in any client's subtitle selector; subtitles fill in as they are generated
+                        (nudge the seek bar to refresh immediately).</p>
                 </div>
 
-                <h3 class="sectionTitle">语音识别 ASR</h3>
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="AsrBaseUrl" label="ASR Base URL" />
-                    <div class="fieldDescription">例：https://api.openai.com/v1 、https://api.siliconflow.cn/v1 、http://127.0.0.1:8000/v1</div>
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="password" id="AsrApiKey" label="ASR API Key" />
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="AsrModel" label="ASR Model" />
-                    <div class="fieldDescription">例：whisper-1、gpt-4o-transcribe、SenseVoiceSmall、FunAudioLLM/SenseVoiceSmall</div>
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="AsrLanguage" label="源语言提示（可空 = 自动检测）" />
-                    <div class="fieldDescription">ISO-639-1，如 en / ja / zh</div>
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="AsrPrompt" label="ASR Prompt（可空，术语/风格提示）" />
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="number" id="ChunkSeconds" min="30" max="3600" label="分段时长（秒）" />
-                    <div class="fieldDescription">按此长度用 ffmpeg 切分音频，从当前播放位置的段开始逐段请求 ASR。想更快出字幕可调小（120–300）。</div>
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="number" id="MaxParallelChunks" min="1" max="8" label="ASR 并发数" />
+                <div class="lmsubs-columns">
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Speech Recognition (ASR)</h3>
+                        <div class="selectContainer">
+                            <select is="emby-select" id="AsrProvider" label="Provider"></select>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="text" id="AsrBaseUrl" label="Base URL (optional)" />
+                            <div class="fieldDescription">Leave empty to use the provider's default URL.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="password" id="AsrApiKey" label="API Key" />
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="text" id="AsrModel" label="Model" />
+                            <div class="fieldDescription">e.g. whisper-1, gpt-4o-transcribe, FunAudioLLM/SenseVoiceSmall</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="text" id="AsrLanguage" label="Source language hint (empty = auto detect)" />
+                            <div class="fieldDescription">ISO-639-1, e.g. en / ja / zh</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="text" id="AsrPrompt" label="ASR prompt (optional terminology / style hints)" />
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="ChunkSeconds" min="30" max="3600" label="Chunk length (seconds)" />
+                            <div class="fieldDescription">Audio is cut into chunks with ffmpeg and transcribed starting from the chunk at the current playback position. Lower it (120–300) for faster first subtitles.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="MaxParallelChunks" min="1" max="8" label="ASR concurrency" />
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Translation (LLM)</h3>
+                        <div class="selectContainer">
+                            <select is="emby-select" id="TranslateProvider" label="Provider"></select>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="text" id="TranslateBaseUrl" label="Base URL (optional)" />
+                            <div class="fieldDescription">Leave empty to use the provider's default URL.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="password" id="TranslateApiKey" label="API Key" />
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="text" id="TranslateModel" label="Model" />
+                            <div class="fieldDescription">e.g. gpt-4o-mini, deepseek-chat, Qwen/Qwen2.5-7B-Instruct</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="text" id="TargetLanguage" label="Target language" />
+                            <div class="fieldDescription">e.g. Chinese (Simplified) / English / Japanese</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="ContextPairs" min="0" max="30" label="Context pairs" />
+                            <div class="fieldDescription">Keep the last N "source → translation" pairs as chat context so names and terminology stay consistent. 0 = off.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="TranslateBatchSize" min="1" max="100" label="Subtitle lines per request" />
+                        </div>
+                        <div class="selectContainer">
+                            <select is="emby-select" id="BilingualMode" label="Subtitle style">
+                                <option value="bilingual">Bilingual (source + translation, two lines)</option>
+                                <option value="replace">Translation only</option>
+                            </select>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input is="emby-checkbox" type="checkbox" id="AutoTranslate" />
+                                <span>Translate automatically after transcription</span>
+                            </label>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="text" id="TranslateExtraPrompt" label="Extra translation instructions (optional)" />
+                            <div class="fieldDescription">e.g. keep English names; casual tone; no explanations.</div>
+                        </div>
+                    </div>
                 </div>
 
-                <h3 class="sectionTitle">翻译 LM Translate</h3>
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="TranslateBaseUrl" label="Translate Base URL" />
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="password" id="TranslateApiKey" label="Translate API Key" />
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="TranslateModel" label="Translate Model" />
-                    <div class="fieldDescription">例：gpt-4o-mini、deepseek-chat、Qwen/Qwen2.5-7B-Instruct</div>
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="TargetLanguage" label="目标语言" />
-                    <div class="fieldDescription">如 Chinese (Simplified) / 简体中文 / English / 日本語</div>
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="number" id="ContextPairs" min="0" max="30" label="上下文条数" />
-                    <div class="fieldDescription">保留最近 N 条「原文 → 译文」作为对话上下文，保持人名/术语一致。0 = 关闭。</div>
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="number" id="TranslateBatchSize" min="1" max="100" label="每次翻译的字幕条数" />
-                </div>
-                <div class="selectContainer">
-                    <select is="emby-select" id="BilingualMode" label="字幕样式">
-                        <option value="bilingual">双语（原文 + 译文两行）</option>
-                        <option value="replace">仅译文</option>
-                    </select>
-                </div>
-                <div class="checkboxContainer checkboxContainer-withDescription">
-                    <label class="emby-checkbox-label">
-                        <input is="emby-checkbox" type="checkbox" id="AutoTranslate" />
-                        <span>转写后自动翻译</span>
-                    </label>
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="TranslateExtraPrompt" label="翻译附加指令（可空）" />
-                    <div class="fieldDescription">例：保留英文人名；口语化；不要解释。</div>
-                </div>
-
-                <h3 class="sectionTitle">高级</h3>
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="FfmpegPath" label="ffmpeg 路径（可空 = 使用 Jellyfin 编码器路径 / PATH）" />
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="number" id="AudioBitrateKbps" min="16" max="192" label="提取音频码率 kbps（16kHz 单声道 mp3）" />
-                </div>
-                <div class="inputContainer">
-                    <input is="emby-input" type="number" id="RequestTimeoutSeconds" min="30" max="3600" label="单次请求超时（秒）" />
+                <h3 class="sectionTitle">Advanced</h3>
+                <div class="lmsubs-advanced">
+                    <div class="inputContainer">
+                        <input is="emby-input" type="text" id="FfmpegPath" label="ffmpeg path (empty = Jellyfin encoder path / PATH)" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="AudioBitrateKbps" min="16" max="192" label="Audio bitrate kbps (16 kHz mono mp3)" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="RequestTimeoutSeconds" min="30" max="3600" label="Request timeout (seconds)" />
+                    </div>
                 </div>
 
                 <div style="margin: 1em 0;">
                     <button is="emby-button" type="button" id="LmSubsTestBtn" class="raised emby-button">
-                        <span>测试连接</span>
+                        <span>Test Connection</span>
                     </button>
                     <span id="LmSubsTestResult" style="margin-left: 1em;"></span>
                 </div>
                 <div>
                     <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-                        <span>保存</span>
+                        <span>Save</span>
                     </button>
                 </div>
             </form>

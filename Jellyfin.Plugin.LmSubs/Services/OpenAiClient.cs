@@ -6,13 +6,8 @@ using Jellyfin.Plugin.LmSubs.Configuration;
 
 namespace Jellyfin.Plugin.LmSubs.Services;
 
-/// <summary>A single timed transcript line produced by ASR.</summary>
 public record AsrSegment(double StartSeconds, double EndSeconds, string Text);
 
-/// <summary>
-/// Minimal OpenAI-compatible client: /audio/transcriptions (ASR) and /chat/completions (translation).
-/// Base URL may end at /v1 or already contain the full endpoint path.
-/// </summary>
 public class OpenAiClient
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -48,13 +43,6 @@ public class OpenAiClient
         return client;
     }
 
-    // ---------------------------------------------------------------- ASR
-
-    /// <summary>
-    /// Transcribe one audio file via multipart /audio/transcriptions with verbose_json segments.
-    /// Falls back to plain text (single segment spanning the chunk) when the server
-    /// does not support verbose_json / segment timestamps.
-    /// </summary>
     public async Task<List<AsrSegment>> TranscribeAsync(
         string audioFilePath,
         double chunkOffsetSeconds,
@@ -62,7 +50,7 @@ public class OpenAiClient
         PluginConfiguration config,
         CancellationToken cancellationToken)
     {
-        var url = BuildEndpoint(config.AsrBaseUrl, "/audio/transcriptions");
+        var url = BuildEndpoint(config.EffectiveAsrBaseUrl, "/audio/transcriptions");
         using var client = CreateClient(config.AsrApiKey, config.RequestTimeoutSeconds);
 
         async Task<HttpResponseMessage> PostAsync(string responseFormat)
@@ -141,7 +129,6 @@ public class OpenAiClient
         }
         catch (JsonException)
         {
-            // Plain-text response body.
             if (!string.IsNullOrWhiteSpace(body))
             {
                 result.Add(new AsrSegment(offset, offset + duration, body.Trim()));
@@ -151,12 +138,6 @@ public class OpenAiClient
         return result;
     }
 
-    // ---------------------------------------------------------------- Translation
-
-    /// <summary>
-    /// Translate a batch of subtitle texts. Returns translations aligned by index.
-    /// Uses JSON-mode structured output with a numbered map; falls back to line-by-line on mismatch.
-    /// </summary>
     public async Task<List<string>> TranslateBatchAsync(
         IReadOnlyList<string> texts,
         IReadOnlyList<(string Src, string Dst)> context,
@@ -169,7 +150,7 @@ public class OpenAiClient
             return new List<string>();
         }
 
-        var url = BuildEndpoint(config.TranslateBaseUrl, "/chat/completions");
+        var url = BuildEndpoint(config.EffectiveTranslateBaseUrl, "/chat/completions");
         using var client = CreateClient(config.TranslateApiKey, config.RequestTimeoutSeconds);
 
         var system = new StringBuilder();
@@ -184,7 +165,6 @@ public class OpenAiClient
 
         var messages = new List<object> { new { role = "system", content = system.ToString() } };
 
-        // Rolling context as prior user/assistant turns (same JSON shape).
         if (context.Count > 0)
         {
             var ctxInput = new Dictionary<string, string>();
@@ -221,7 +201,6 @@ public class OpenAiClient
             return map;
         }
 
-        // Fallback: ask for plain numbered lines "N. translation".
         messages[^1] = new
         {
             role = "user",
@@ -236,7 +215,6 @@ public class OpenAiClient
             return lined;
         }
 
-        // Last resort: translate one by one with a plain "translation only" prompt.
         var results = new List<string>(texts.Count);
         foreach (var t in texts)
         {
@@ -284,7 +262,6 @@ public class OpenAiClient
     internal static List<string>? TryParseNumberedJson(string content, int count)
     {
         var trimmed = content.Trim();
-        // Strip markdown code fences if present.
         if (trimmed.StartsWith("```", StringComparison.Ordinal))
         {
             var firstNewline = trimmed.IndexOf('\n');
@@ -350,15 +327,12 @@ public class OpenAiClient
         return Enumerable.Range(1, count).Select(i => dict[i]).ToList();
     }
 
-    // ---------------------------------------------------------------- Connectivity test
-
     public async Task<(bool Ok, string? Error)> TestAsrAsync(PluginConfiguration config, CancellationToken ct)
     {
-        // Probe with a models list first (cheap); many ASR-only servers do not implement it,
-        // so a 404 there is not fatal — only auth errors are.
+        // Probe /models (cheap); ASR-only servers may 404 it, so only auth errors are fatal.
         try
         {
-            var url = BuildEndpoint(config.AsrBaseUrl, "/models");
+            var url = BuildEndpoint(config.EffectiveAsrBaseUrl, "/models");
             using var client = CreateClient(config.AsrApiKey, 30);
             var resp = await client.GetAsync(url, ct).ConfigureAwait(false);
             if (resp.IsSuccessStatusCode)
@@ -369,10 +343,10 @@ public class OpenAiClient
             var status = (int)resp.StatusCode;
             if (status is 401 or 403)
             {
-                return (false, $"HTTP {status} (API Key 无效?)");
+                return (false, $"HTTP {status} (invalid API key?)");
             }
 
-            return (true, $"HTTP {status} — /models 不可用，转写接口可能仍正常");
+            return (true, $"HTTP {status} — /models unavailable, transcription may still work");
         }
         catch (Exception ex)
         {
@@ -384,7 +358,7 @@ public class OpenAiClient
     {
         try
         {
-            var url = BuildEndpoint(config.TranslateBaseUrl, "/chat/completions");
+            var url = BuildEndpoint(config.EffectiveTranslateBaseUrl, "/chat/completions");
             using var client = CreateClient(config.TranslateApiKey, 60);
             var payload = new
             {

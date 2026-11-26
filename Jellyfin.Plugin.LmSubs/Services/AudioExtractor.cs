@@ -6,9 +6,6 @@ using MediaBrowser.Model.Configuration;
 
 namespace Jellyfin.Plugin.LmSubs.Services;
 
-/// <summary>
-/// Extracts audio windows from media files with ffmpeg (16 kHz mono mp3, ASR-friendly).
-/// </summary>
 public class AudioExtractor
 {
     private readonly IServerConfigurationManager _configurationManager;
@@ -25,7 +22,6 @@ public class AudioExtractor
             return config.FfmpegPath;
         }
 
-        // Prefer Jellyfin's configured encoder path when available.
         try
         {
             var encoding = (EncodingOptions)_configurationManager.GetConfiguration("encoding");
@@ -36,13 +32,11 @@ public class AudioExtractor
         }
         catch
         {
-            // fall through to PATH
         }
 
         return "ffmpeg";
     }
 
-    /// <summary>Probe media duration in seconds via ffprobe; returns 0 when unavailable.</summary>
     public async Task<double> GetDurationSecondsAsync(string mediaPath, PluginConfiguration config, CancellationToken ct)
     {
         var ffmpeg = ResolveFfmpegPath(config);
@@ -68,15 +62,11 @@ public class AudioExtractor
         }
         catch
         {
-            // ignore — duration is best-effort
         }
 
         return 0;
     }
 
-    /// <summary>
-    /// Extract [startSeconds, startSeconds+durationSeconds) of the given audio stream to an mp3 file.
-    /// </summary>
     public async Task ExtractAsync(
         string mediaPath,
         int? audioStreamIndex,
@@ -96,7 +86,7 @@ public class AudioExtractor
         var (code, _, err) = await RunAsync(ffmpeg, args, ct).ConfigureAwait(false);
         if (code != 0 || !File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
         {
-            throw new InvalidOperationException($"ffmpeg 提取音频失败 (exit {code}): {err.Trim()}");
+            throw new InvalidOperationException($"ffmpeg audio extraction failed (exit {code}): {err.Trim()}");
         }
     }
 
@@ -112,7 +102,7 @@ public class AudioExtractor
             CreateNoWindow = true
         };
 
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException($"无法启动 {file}");
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to start {file}");
         var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
         var stderrTask = process.StandardError.ReadToEndAsync(ct);
         await process.WaitForExitAsync(ct).ConfigureAwait(false);

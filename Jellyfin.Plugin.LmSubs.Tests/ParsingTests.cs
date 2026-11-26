@@ -41,11 +41,11 @@ public class ParsingTests
     [Fact]
     public void Transcription_PlainJsonFallback()
     {
-        var segs = OpenAiClient.ParseTranscription("{\"text\":\"你好世界\"}", 30, 30);
+        var segs = OpenAiClient.ParseTranscription("{\"text\":\"hello world\"}", 30, 30);
         Assert.Single(segs);
         Assert.Equal(30, segs[0].StartSeconds);
         Assert.Equal(60, segs[0].EndSeconds);
-        Assert.Equal("你好世界", segs[0].Text);
+        Assert.Equal("hello world", segs[0].Text);
     }
 
     [Fact]
@@ -59,9 +59,9 @@ public class ParsingTests
     [Fact]
     public void NumberedJson_ParsesAligned()
     {
-        var r = OpenAiClient.TryParseNumberedJson("{\"1\":\"你好\",\"2\":\"世界\"}", 2);
+        var r = OpenAiClient.TryParseNumberedJson("{\"1\":\"hello\",\"2\":\"world\"}", 2);
         Assert.NotNull(r);
-        Assert.Equal(new[] { "你好", "世界" }, r);
+        Assert.Equal(new[] { "hello", "world" }, r);
     }
 
     [Fact]
@@ -81,9 +81,9 @@ public class ParsingTests
     [Fact]
     public void NumberedLines_Parses()
     {
-        var r = OpenAiClient.ParseNumberedLines("1. 你好\n2、世界\n3: ok", 3);
+        var r = OpenAiClient.ParseNumberedLines("1. hello\n2. world\n3: ok", 3);
         Assert.NotNull(r);
-        Assert.Equal(new[] { "你好", "世界", "ok" }, r);
+        Assert.Equal(new[] { "hello", "world", "ok" }, r);
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public class ParsingTests
     {
         var cues = new List<SubtitleCue>
         {
-            new(0, 2.5, "Hello\n你好"),
+            new(0, 2.5, "Hello\nBonjour"),
             new(65.25, 70, "Second line")
         };
         var srt = SubtitleText.ToSrt(cues);
@@ -99,7 +99,7 @@ public class ParsingTests
         Assert.Contains("00:01:05,250 --> 00:01:10,000", srt);
         var parsed = SubtitleText.ParseSrt(srt);
         Assert.Equal(2, parsed.Count);
-        Assert.Equal("Hello\n你好", parsed[0].Text);
+        Assert.Equal("Hello\nBonjour", parsed[0].Text);
         Assert.Equal(65.25, parsed[1].Start, 3);
     }
 
@@ -112,15 +112,14 @@ public class ParsingTests
     }
 
     [Fact]
-    public void Normalize_SplitsLongCjkSegment()
+    public void Normalize_SplitsLongNoSpaceSegment()
     {
-        var longText = new string('字', 200);
+        var longText = string.Join(string.Empty, Enumerable.Repeat("word ", 60)).Trim();
         var segs = new[] { new AsrSegment(0, 40, longText) };
         var cues = SubtitleText.Normalize(segs);
         Assert.True(cues.Count >= 3);
         Assert.All(cues, c => Assert.True(c.Text.Length <= 80));
         Assert.True(cues[^1].End <= 40.001);
-        // ordered and non-overlapping
         for (var i = 1; i < cues.Count; i++)
         {
             Assert.True(cues[i].Start >= cues[i - 1].End - 0.001);

@@ -10,11 +10,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LmSubs.Api;
 
-/// <summary>
-/// REST helpers. Normal playback needs none of these — selecting the LM subtitle
-/// track in any client drives everything via playback events. These endpoints are
-/// for scripts, debugging and external players.
-/// </summary>
 [ApiController]
 [Authorize]
 [Route("LmSubs")]
@@ -48,7 +43,6 @@ public class LmSubsController : ControllerBase
         bool Translate = true,
         string? TargetLanguage = null);
 
-    /// <summary>Start / resume the pipeline (Live=true re-transcribes from Position and overwrites).</summary>
     [HttpPost("Generate")]
     public ActionResult Generate([FromBody] GenerateRequest request)
     {
@@ -63,7 +57,6 @@ public class LmSubsController : ControllerBase
         }
     }
 
-    /// <summary>Job status for polling.</summary>
     [HttpGet("Status/{itemId:guid}")]
     public ActionResult Status([FromRoute] Guid itemId)
     {
@@ -82,13 +75,12 @@ public class LmSubsController : ControllerBase
     [HttpPost("Cancel/{itemId:guid}")]
     public ActionResult Cancel([FromRoute] Guid itemId) => Ok(new { cancelled = _subtitles.Cancel(itemId) });
 
-    /// <summary>Install (or repair) the two LM subtitle tracks on an item.</summary>
     [HttpPost("Install/{itemId:guid}")]
     public ActionResult Install([FromRoute] Guid itemId)
     {
         if (_libraryManager.GetItemById(itemId) is not Video video)
         {
-            return NotFound(new { error = "不是视频项" });
+            return NotFound(new { error = "Not a video item" });
         }
 
         var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
@@ -98,7 +90,6 @@ public class LmSubsController : ControllerBase
 
     public record TranslateRequest([Required] Guid ItemId, string? TargetLanguage = null);
 
-    /// <summary>Translate the cached source subtitles (no ASR).</summary>
     [HttpPost("Translate")]
     public async Task<ActionResult> Translate([FromBody] TranslateRequest request, CancellationToken ct)
     {
@@ -113,7 +104,6 @@ public class LmSubsController : ControllerBase
         }
     }
 
-    /// <summary>Fetch generated subtitles as WebVTT / SRT (external players, debugging).</summary>
     [HttpGet("Subtitles/{itemId:guid}")]
     [AllowAnonymous] // <track> requests cannot carry auth headers; item ids are unguessable GUIDs
     public ActionResult Subtitles(
@@ -127,7 +117,6 @@ public class LmSubsController : ControllerBase
         var live = string.Equals(mode, "live", StringComparison.OrdinalIgnoreCase);
         var translated = !string.Equals(mode, "source", StringComparison.OrdinalIgnoreCase);
 
-        // Serving subtitles also nudges the pipeline (position unknown here).
         if (translated)
         {
             try { _subtitles.EnsureRunning(itemId, null, force: false); } catch { /* item may be gone */ }
@@ -143,7 +132,6 @@ public class LmSubsController : ControllerBase
         return vtt == null ? NotFound() : Content(vtt, "text/vtt; charset=utf-8");
     }
 
-    /// <summary>Connectivity test for both configured endpoints (used by the config page).</summary>
     [HttpPost("Test")]
     public async Task<ActionResult> Test(CancellationToken ct)
     {

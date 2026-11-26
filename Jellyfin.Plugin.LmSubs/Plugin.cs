@@ -6,9 +6,6 @@ using MediaBrowser.Model.Serialization;
 
 namespace Jellyfin.Plugin.LmSubs;
 
-/// <summary>
-/// LMSubs plugin: OpenAI-compatible ASR + LLM subtitle generation for Jellyfin.
-/// </summary>
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)

@@ -3,10 +3,8 @@ using System.Text;
 
 namespace Jellyfin.Plugin.LmSubs.Services;
 
-/// <summary>A subtitle cue.</summary>
 public record SubtitleCue(double Start, double End, string Text);
 
-/// <summary>SRT / WebVTT helpers.</summary>
 public static class SubtitleText
 {
     public static string FormatTimestamp(double seconds, bool vtt)
@@ -104,7 +102,6 @@ public static class SubtitleText
         return true;
     }
 
-    /// <summary>Split over-long ASR segments into readable cues (roughly even, max chars per line).</summary>
     public static List<SubtitleCue> Normalize(IEnumerable<AsrSegment> segments, double maxCharsPerCue = 80, double maxCueSeconds = 8)
     {
         var cues = new List<SubtitleCue>();

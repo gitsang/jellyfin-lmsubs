@@ -7,20 +7,10 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LmSubs.Providers;
 
-/// <summary>
-/// Installs the two LM subtitle tracks as real external subtitle MediaStreams in
-/// Jellyfin's library database, so they appear in every client's subtitle selector
-/// with zero web modification.
-///
-/// Track files always live in the plugin cache (never in the media directory — a
-/// library re-scan would wipe DB streams whose files vanished, and media dirs are
-/// often read-only). Jellyfin serves them through its normal external-subtitle
-/// route. Playback events (ISessionManager) tell us when a user selects an LM track
-/// and where they are; the pipeline then fills the files in place.
-/// </summary>
+// Track files live in the plugin cache, never in the media directory: a library
+// re-scan wipes DB streams whose files vanished, and media dirs are often read-only.
 public static class LmTrackInstaller
 {
-    /// <summary>Marker in the subtitle file name that identifies LM tracks anywhere.</summary>
     public const string Marker = ".lmsubs";
 
     public static bool IsLmPath(string? path) =>
@@ -31,7 +21,6 @@ public static class LmTrackInstaller
     public static bool IsLivePath(string? path) =>
         !string.IsNullOrEmpty(path) && path.Contains(Marker + "-live.", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Try to map an item id + stream index to an LM track.</summary>
     public static bool TryIdentify(IItemRepository itemRepo, Guid itemId, int? streamIndex, out bool live)
     {
         live = false;
@@ -53,12 +42,12 @@ public static class LmTrackInstaller
             return true;
         }
 
-        if (string.Equals(stream.Title, "LM 字幕", StringComparison.Ordinal))
+        if (string.Equals(stream.Title, "LM Subtitles", StringComparison.Ordinal))
         {
             return true;
         }
 
-        if (string.Equals(stream.Title, "LM 字幕（实时）", StringComparison.Ordinal))
+        if (string.Equals(stream.Title, "LM Subtitles (Live)", StringComparison.Ordinal))
         {
             live = true;
             return true;
@@ -67,10 +56,6 @@ public static class LmTrackInstaller
         return false;
     }
 
-    /// <summary>
-    /// Ensure both LM tracks exist on the video. Returns true when new streams were saved.
-    /// Safe to call repeatedly; never touches non-LM streams.
-    /// </summary>
     public static bool EnsureTracks(
         Video video,
         IItemRepository itemRepo,
@@ -90,10 +75,9 @@ public static class LmTrackInstaller
 
         foreach (var live in new[] { false, true })
         {
-            var title = live ? "LM 字幕（实时）" : "LM 字幕";
+            var title = live ? "LM Subtitles (Live)" : "LM Subtitles";
             var path = store.CacheSrtPath(video.Id, true, live, targetLanguage);
 
-            // The served file must exist before Jellyfin tries to read it.
             if (!File.Exists(path))
             {
                 File.WriteAllText(path, string.Empty);
