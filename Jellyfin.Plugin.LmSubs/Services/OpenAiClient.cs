@@ -8,6 +8,13 @@ namespace Jellyfin.Plugin.LmSubs.Services;
 
 public record AsrSegment(double StartSeconds, double EndSeconds, string Text);
 
+public class TokenLimitException : HttpRequestException
+{
+    public TokenLimitException(string message) : base(message)
+    {
+    }
+}
+
 public class OpenAiClient
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -250,7 +257,20 @@ public class OpenAiClient
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode)
         {
-            throw new HttpRequestException($"Translate HTTP {(int)resp.StatusCode}: {Truncate(body, 500)}");
+            var msg = $"Translate HTTP {(int)resp.StatusCode}: {Truncate(body, 500)}";
+            // Providers report context overflow with assorted wordings; treat them all as split-and-retry.
+            if ((int)resp.StatusCode == 400 &&
+                (body.Contains("max_seq_len", StringComparison.OrdinalIgnoreCase) ||
+                 body.Contains("context_length", StringComparison.OrdinalIgnoreCase) ||
+                 body.Contains("context length", StringComparison.OrdinalIgnoreCase) ||
+                 body.Contains("maximum context", StringComparison.OrdinalIgnoreCase) ||
+                 body.Contains("too many tokens", StringComparison.OrdinalIgnoreCase) ||
+                 (body.Contains("token", StringComparison.OrdinalIgnoreCase) && body.Contains("exceed", StringComparison.OrdinalIgnoreCase))))
+            {
+                throw new TokenLimitException(msg);
+            }
+
+            throw new HttpRequestException(msg);
         }
 
         using var doc = JsonDocument.Parse(body);

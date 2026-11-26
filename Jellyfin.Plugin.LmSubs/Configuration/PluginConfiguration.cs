@@ -31,6 +31,9 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public int TranslateBatchSize { get; set; } = 20;
 
+    // Estimated input-token budget per translate request (system + context + lines). 0 = unlimited.
+    public int ContextSize { get; set; } = 6000;
+
     public bool AutoTranslate { get; set; } = true;
 
     public string BilingualMode { get; set; } = "bilingual";

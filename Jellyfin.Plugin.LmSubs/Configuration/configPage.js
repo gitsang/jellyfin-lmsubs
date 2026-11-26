@@ -25,7 +25,7 @@ const TEXT_FIELDS = [
     'TranslateExtraPrompt', 'FfmpegPath'
 ];
 const NUM_FIELDS = [
-    'ChunkSeconds', 'ContextPairs', 'TranslateBatchSize',
+    'ChunkSeconds', 'ContextPairs', 'TranslateBatchSize', 'ContextSize',
     'AudioBitrateKbps', 'RequestTimeoutSeconds'
 ];
 const SELECT_FIELDS = ['AsrProvider', 'TranslateProvider'];

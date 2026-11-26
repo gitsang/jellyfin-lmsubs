@@ -596,6 +596,26 @@ public class SubtitleService
         job.Completion.TrySetResult();
     }
 
+    // Rough token estimate: CJK ~1 token/char, everything else ~1 token/4 chars.
+    internal static int EstimateTokens(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return 0;
+        }
+
+        var cjk = 0;
+        foreach (var ch in text)
+        {
+            if (ch >= 0x2E80 && ch <= 0xFAFF)
+            {
+                cjk++;
+            }
+        }
+
+        return cjk + (text.Length - cjk + 3) / 4;
+    }
+
     private async Task<List<SubtitleCue>> TranslateCuesAsync(
         List<SubtitleCue> cues, string targetLanguage,
         List<(string Src, string Dst)> context, int ctxMax, CancellationToken ct,
@@ -603,16 +623,36 @@ public class SubtitleService
     {
         var config = Config;
         var batchSize = Math.Clamp(config.TranslateBatchSize, 1, 100);
+        var budget = Math.Max(0, config.ContextSize);
         var output = new List<SubtitleCue>(cues.Count);
+        var offset = 0;
 
-        for (var offset = 0; offset < cues.Count; offset += batchSize)
+        while (offset < cues.Count)
         {
             ct.ThrowIfCancellationRequested();
-            var batch = cues.Skip(offset).Take(batchSize).ToList();
+
+            // Pack the batch under both the line cap and the estimated token budget.
+            var fixedTokens = 400 + context.Sum(p => EstimateTokens(p.Src) + EstimateTokens(p.Dst));
+            var count = 0;
+            var batchTokens = 0;
+            while (count < batchSize && offset + count < cues.Count)
+            {
+                var t = EstimateTokens(cues[offset + count].Text) + 8;
+                if (budget > 0 && count > 0 && fixedTokens + batchTokens + t > budget)
+                {
+                    break;
+                }
+
+                batchTokens += t;
+                count++;
+            }
+
+            var batch = cues.Skip(offset).Take(count).ToList();
             var texts = batch.Select(c => c.Text).ToList();
-            var translations = await _openAi.TranslateBatchAsync(texts, context, targetLanguage, config, ct).ConfigureAwait(false);
-            _logger.Debug("LMSubs: translate batch {From}-{To}/{Total} ({Lang}) ok", offset + 1, Math.Min(offset + batch.Count, cues.Count), cues.Count, targetLanguage);
-            onBatch?.Invoke((double)Math.Min(offset + batch.Count, cues.Count) / cues.Count);
+            var translations = await TranslateWithSplitAsync(texts, context, targetLanguage, config, ct).ConfigureAwait(false);
+            offset += count;
+            _logger.Debug("LMSubs: translate batch {From}-{To}/{Total} ({Lang}) ok, ~{Tokens} tokens", offset - count + 1, offset, cues.Count, targetLanguage, fixedTokens + batchTokens);
+            onBatch?.Invoke((double)offset / cues.Count);
 
             for (var i = 0; i < batch.Count; i++)
             {
@@ -632,9 +672,47 @@ public class SubtitleService
                     }
                 }
             }
+
+            // Keep the context itself inside the budget for the next request.
+            if (budget > 0)
+            {
+                while (context.Count > 1 &&
+                       400 + context.Sum(p => EstimateTokens(p.Src) + EstimateTokens(p.Dst)) > budget / 2)
+                {
+                    context.RemoveAt(0);
+                }
+            }
         }
 
         return output;
+    }
+
+    // On provider context-overflow errors, halve the batch and retry each half.
+    private async Task<List<string>> TranslateWithSplitAsync(
+        List<string> texts,
+        List<(string Src, string Dst)> context,
+        string targetLanguage,
+        PluginConfiguration config,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _openAi.TranslateBatchAsync(texts, context, targetLanguage, config, ct).ConfigureAwait(false);
+        }
+        catch (TokenLimitException ex) when (texts.Count > 1)
+        {
+            _logger.Warn("LMSubs: batch of {Count} lines exceeded the model context, splitting: {Error}", texts.Count, ex.Message);
+            var mid = texts.Count / 2;
+            var left = await TranslateWithSplitAsync(texts.Take(mid).ToList(), context, targetLanguage, config, ct).ConfigureAwait(false);
+            var right = await TranslateWithSplitAsync(texts.Skip(mid).ToList(), context, targetLanguage, config, ct).ConfigureAwait(false);
+            return left.Concat(right).ToList();
+        }
+        catch (TokenLimitException) when (texts.Count == 1)
+        {
+            // A single line still overflows (huge cue or context): drop context and retry once.
+            _logger.Warn("LMSubs: single line exceeded the model context, retrying without context");
+            return await _openAi.TranslateBatchAsync(texts, Array.Empty<(string Src, string Dst)>(), targetLanguage, config, ct).ConfigureAwait(false);
+        }
     }
 
     public async Task<string> TranslateCachedAsync(Guid itemId, string? targetLanguage, CancellationToken ct)

@@ -188,4 +188,15 @@ public class ParsingTests
         Assert.Equal(1, session.ChunkEndCounts.Count(end => end <= 2));
         Assert.Equal(2, session.ChunkEndCounts.Count(end => end <= 3));
     }
+
+    [Fact]
+    public void EstimateTokens_CjkAndLatin()
+    {
+        Assert.Equal(12, SubtitleService.EstimateTokens("你好世界测试字幕一二三四"));
+        Assert.Equal(3, SubtitleService.EstimateTokens("hello world!")); // 12 chars -> 3
+        Assert.Equal(0, SubtitleService.EstimateTokens(""));
+        Assert.Equal(0, SubtitleService.EstimateTokens(null));
+        // Mixed: 2 CJK + 6 latin -> 2 + 2
+        Assert.Equal(4, SubtitleService.EstimateTokens("你好 abcde")); // 2 CJK + 6 other -> 2 + (6+3)/4
+    }
 }

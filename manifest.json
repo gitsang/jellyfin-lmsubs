@@ -8,6 +8,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "1.3.5.0",
+        "changelog": "Context size setting: token-budgeted translate batches (default 6000 est. tokens, 0=unlimited). Provider context-overflow errors now split and retry the batch instead of failing the job.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.3.5.0/lmsubs_1.3.5.0.zip",
+        "checksum": "a6bdbbdaf85aebe9e299147ae560fafe",
+        "timestamp": "2026-11-26T17:20:05Z"
+      },
+      {
         "version": "1.3.4.0",
         "changelog": "Remove dead ASR concurrency setting. Debounce duplicate download clicks (no duplicate subtitle tracks). Plugin-only Log level setting with Debug process logs (per ASR chunk / translation batch).",
         "targetAbi": "10.11.0.0",
