@@ -1,6 +1,7 @@
 using Jellyfin.Plugin.LmSubs.Services;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
+using MediaBrowser.Controller.Subtitles;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Jellyfin.Plugin.LmSubs;
@@ -14,6 +15,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<AudioExtractor>();
         serviceCollection.AddSingleton<SubtitleStore>();
         serviceCollection.AddSingleton<SubtitleService>();
-        serviceCollection.AddSingleton<Providers.LmSubtitleProvider>();
+        // Must register as ISubtitleProvider: SubtitleManager resolves IEnumerable<ISubtitleProvider>.
+        serviceCollection.AddSingleton<ISubtitleProvider, Providers.LmSubtitleProvider>();
     }
 }
