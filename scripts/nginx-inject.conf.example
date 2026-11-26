@@ -1,0 +1,20 @@
+# LMSubs web 注入（nginx 反代方案，Jellyfin 升级后不失效）
+#
+# 1) 把 web/lmsubs.js 放到 nginx 可读的路径，例如 /srv/jellyfin/lmsubs.js
+# 2) 在 jellyfin 的 server {} 中加入：
+
+    # 直接由 nginx 提供脚本
+    location = /web/lmsubs.js {
+        alias /srv/jellyfin/lmsubs.js;
+        default_type application/javascript;
+    }
+
+    # 在 index.html 里注入 <script>
+    location = /web/index.html {
+        proxy_pass http://127.0.0.1:8096;
+        proxy_set_header Accept-Encoding "";   # 关闭压缩以便 sub_filter
+        sub_filter_once on;
+        sub_filter '</body>' '<script src="lmsubs.js" defer></script></body>';
+    }
+    # 根路径重定向到 /web/index.html 的情况通常已被上面覆盖；
+    # 若你的入口是 /web/，再加一条同样的 sub_filter location = /web/ { ... }
