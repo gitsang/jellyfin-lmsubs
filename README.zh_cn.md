@@ -54,7 +54,7 @@ ffmpeg 提取 16kHz mp3 ──► /audio/transcriptions (ASR)
 
 ## 3. 环境要求
 
-- Jellyfin **10.10.x**（.NET 8）
+- Jellyfin **10.11.x**（.NET 9）
 - 服务端可用 `ffmpeg` / `ffprobe`（默认复用 Jellyfin 自带 jellyfin-ffmpeg）
 
 ## 4. 安装
@@ -97,7 +97,7 @@ https://raw.githubusercontent.com/gitsang/jellyfin-lmsubs/main/manifest.json
 ## 6. 开发
 
 ```bash
-dotnet build          # net8.0 + Jellyfin.Controller 10.10.7
+dotnet build          # net9.0 + Jellyfin.Controller 10.11.5
 dotnet test           # 解析 / 时间轴 / 翻译映射单元测试
 ./scripts/package.sh  # 打可安装的 zip
 ```

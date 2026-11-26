@@ -60,7 +60,7 @@ ffmpeg extracts 16 kHz mp3 ──► /audio/transcriptions (ASR)
 
 ## 3. Requirements
 
-- Jellyfin **10.10.x** (.NET 8)
+- Jellyfin **10.11.x** (.NET 9)
 - `ffmpeg` / `ffprobe` available on the server (Jellyfin's bundled jellyfin-ffmpeg is reused by default)
 
 ## 4. Installation
@@ -105,7 +105,7 @@ Cache location: `<data dir>/plugins/lmsubs/cache/<itemId>/`
 ## 6. Development
 
 ```bash
-dotnet build          # net8.0 + Jellyfin.Controller 10.10.7
+dotnet build          # net9.0 + Jellyfin.Controller 10.11.5
 dotnet test           # parsing / timing / translation-map unit tests
 ./scripts/package.sh  # build the installable zip
 ```
