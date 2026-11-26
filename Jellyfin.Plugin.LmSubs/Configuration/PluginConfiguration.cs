@@ -19,8 +19,6 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public int ChunkSeconds { get; set; } = 600;
 
-    public int MaxParallelChunks { get; set; } = 2;
-
     public string TranslateProvider { get; set; } = "openai";
 
     public string TranslateBaseUrl { get; set; } = string.Empty;
@@ -44,6 +42,9 @@ public class PluginConfiguration : BasePluginConfiguration
     public int RequestTimeoutSeconds { get; set; } = 300;
 
     public string TranslateExtraPrompt { get; set; } = string.Empty;
+
+    // Empty = follow the server's log level. Otherwise Debug/Information/Warning/Error/None.
+    public string LogLevel { get; set; } = string.Empty;
 
     public string EffectiveAsrBaseUrl =>
         string.IsNullOrWhiteSpace(AsrBaseUrl) ? ProviderPresets.DefaultBaseUrl(AsrProvider) : AsrBaseUrl;

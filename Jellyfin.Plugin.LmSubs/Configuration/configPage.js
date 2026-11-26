@@ -25,7 +25,7 @@ const TEXT_FIELDS = [
     'TranslateExtraPrompt', 'FfmpegPath'
 ];
 const NUM_FIELDS = [
-    'ChunkSeconds', 'MaxParallelChunks', 'ContextPairs', 'TranslateBatchSize',
+    'ChunkSeconds', 'ContextPairs', 'TranslateBatchSize',
     'AudioBitrateKbps', 'RequestTimeoutSeconds'
 ];
 const SELECT_FIELDS = ['AsrProvider', 'TranslateProvider'];
@@ -69,6 +69,7 @@ export default function (view) {
             NUM_FIELDS.forEach((k) => { $('#' + k).value = config[k]; });
             SELECT_FIELDS.forEach((k) => { $('#' + k).value = config[k] || 'custom'; });
             $('#BilingualMode').value = config.BilingualMode || 'bilingual';
+            $('#LogLevel').value = config.LogLevel || '';
             $('#AutoTranslate').checked = config.AutoTranslate !== false;
             updateAsrPlaceholder();
             updateTranslatePlaceholder();
@@ -82,6 +83,7 @@ export default function (view) {
         NUM_FIELDS.forEach((k) => { c[k] = parseInt($('#' + k).value, 10) || 0; });
         SELECT_FIELDS.forEach((k) => { c[k] = $('#' + k).value; });
         c.BilingualMode = $('#BilingualMode').value;
+        c.LogLevel = $('#LogLevel').value;
         c.AutoTranslate = $('#AutoTranslate').checked;
         return c;
     }

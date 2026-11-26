@@ -60,9 +60,6 @@
                             <input is="emby-input" type="number" id="ChunkSeconds" min="30" max="3600" label="Chunk length (seconds)" />
                             <div class="fieldDescription">Audio is cut into chunks with ffmpeg and transcribed sequentially from the beginning. Smaller chunks mean more requests; larger chunks mean fewer, longer calls.</div>
                         </div>
-                        <div class="inputContainer">
-                            <input is="emby-input" type="number" id="MaxParallelChunks" min="1" max="8" label="ASR concurrency" />
-                        </div>
                     </div>
 
                     <div class="verticalSection">
@@ -118,6 +115,16 @@
                     </div>
                     <div class="inputContainer">
                         <input is="emby-input" type="number" id="RequestTimeoutSeconds" min="30" max="3600" label="Request timeout (seconds)" />
+                    </div>
+                    <div class="selectContainer">
+                        <select is="emby-select" id="LogLevel" label="Log level">
+                            <option value="">Server default</option>
+                            <option value="Debug">Debug (per-chunk / per-batch details)</option>
+                            <option value="Information">Information</option>
+                            <option value="Warning">Warning</option>
+                            <option value="Error">Error</option>
+                        </select>
+                        <div class="fieldDescription">Plugin-only filter for the Jellyfin server log. Debug prints every ASR chunk and translation batch (tagged [Debug] if the server level would hide it).</div>
                     </div>
                 </div>
 

@@ -46,6 +46,10 @@ ffmpeg extracts 16 kHz mp3 ──► /audio/transcriptions (ASR)
 - **The download request waits for generation**: if a reverse proxy times out (e.g. nginx's
   default 60 s) and drops the connection, the background job is unaffected and keeps running;
   the subtitle is still saved and registered when done — refresh the subtitle list later.
+- **Duplicate clicks are debounced**: while a download is already waiting on a running job,
+  clicking download again fails fast instead of queueing a second save (no duplicate tracks).
+- **Logging**: everything goes to the Jellyfin server log. The Advanced settings have a
+  plugin-only Log level; set it to Debug to log every ASR chunk and translation batch.
 - **ASR is shared across target languages**: transcription runs once per item; requesting a
   second language reuses the same transcript (and its live progress) and only pays for
   translation. Translations for different languages run in parallel.

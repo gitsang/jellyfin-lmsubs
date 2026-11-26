@@ -106,7 +106,7 @@ public class SubtitleService
     private readonly SubtitleStore _store;
     private readonly OpenAiClient _openAi;
     private readonly AudioExtractor _extractor;
-    private readonly ILogger<SubtitleService> _logger;
+    private readonly LmLog _logger;
 
     private readonly ConcurrentDictionary<Guid, AsrSession> _sessions = new();
     private readonly ConcurrentDictionary<(Guid ItemId, string Lang), GenerationJob> _jobs = new();
@@ -124,7 +124,7 @@ public class SubtitleService
         _store = store;
         _openAi = openAi;
         _extractor = extractor;
-        _logger = logger;
+        _logger = new LmLog(logger);
     }
 
     private static PluginConfiguration Config =>
@@ -270,7 +270,10 @@ public class SubtitleService
         return cancelled;
     }
 
-    public GenerationJob EnsureRunning(Guid itemId, bool translate = true, string? targetLanguage = null, bool restart = false)
+    public GenerationJob EnsureRunning(Guid itemId, bool translate = true, string? targetLanguage = null, bool restart = false) =>
+        EnsureRunning(itemId, out _, translate, targetLanguage, restart);
+
+    public GenerationJob EnsureRunning(Guid itemId, out bool created, bool translate = true, string? targetLanguage = null, bool restart = false)
     {
         var lang = NormalizeTargetLanguage(targetLanguage);
         var key = (itemId, translate ? SubtitleStore.LangSlug(lang) : "source");
@@ -279,6 +282,7 @@ public class SubtitleService
         controlLock.Wait();
         try
         {
+            created = false;
             if (_jobs.TryGetValue(key, out var existing))
             {
                 if (existing.Status is "queued" or "running")
@@ -306,6 +310,7 @@ public class SubtitleService
             };
 
             _jobs[key] = job;
+            created = true;
             _ = Task.Run(() => RunJobAsync(job, session));
             return job;
         }
@@ -373,6 +378,7 @@ public class SubtitleService
 
             var chunk = Math.Clamp(config.ChunkSeconds, 30, 3600);
             session.ChunkCount = (int)Math.Ceiling(duration / chunk);
+            _logger.Debug("LMSubs: ASR start {Item}: {Duration:0}s, {Chunks} chunks of {Chunk}s", session.ItemName, duration, session.ChunkCount, chunk);
 
             for (var i = 0; i < session.ChunkCount; i++)
             {
@@ -393,12 +399,14 @@ public class SubtitleService
                     try { File.Delete(file); } catch { /* best effort */ }
                 }
 
-                session.AppendChunk(SubtitleText.Normalize(segments));
+                var chunkCues = SubtitleText.Normalize(segments);
+                session.AppendChunk(chunkCues);
                 _store.SaveSourceCues(session.ItemId, session.SnapshotCues());
+                _logger.Debug("LMSubs: ASR chunk {Index}/{Total} of {Item}: {Cues} cues", i + 1, session.ChunkCount, session.ItemName, chunkCues.Count);
             }
 
             _store.Render(session.ItemId, translated: false, "source", session.SnapshotCues());
-            _logger.LogInformation("LMSubs: transcribed {Item} ({Chunks} chunks)", session.ItemName, session.ChunkCount);
+            _logger.Info("LMSubs: transcribed {Item} ({Chunks} chunks)", session.ItemName, session.ChunkCount);
             FinishSession(session, "done");
         }
         catch (OperationCanceledException)
@@ -407,7 +415,7 @@ public class SubtitleService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "LMSubs: ASR failed for {Item}", session.ItemName);
+            _logger.Error(ex, "LMSubs: ASR failed for {Item}", session.ItemName);
             session.Error = ex.Message;
             FinishSession(session, "error");
         }
@@ -480,6 +488,7 @@ public class SubtitleService
                 {
                     var pending = snapshot.Skip(translatedCount).ToList();
                     job.Stage = $"Translating lines {translatedCount + 1}–{snapshot.Count}";
+                    _logger.Debug("LMSubs: translate {Item} ({Lang}): lines {From}-{To}", job.ItemName, job.TargetLanguage, translatedCount + 1, snapshot.Count);
 
                     // Interpolate between the last fully translated chunk and ASR's position.
                     var span = (double)chunksDone / chunkCount - baseP;
@@ -534,7 +543,7 @@ public class SubtitleService
             }
 
             _store.Render(job.ItemId, job.Translate, job.TargetLanguage, finalCues);
-            _logger.LogInformation("LMSubs: generated {Count} cues for {Item} ({Lang})",
+            _logger.Info("LMSubs: generated {Count} cues for {Item} ({Lang})",
                 finalCues.Count, job.ItemName, job.Translate ? job.TargetLanguage : "source");
             Finish(job, "done");
         }
@@ -544,7 +553,7 @@ public class SubtitleService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "LMSubs: translation failed for {Item} ({Lang})", job.ItemName, job.TargetLanguage);
+            _logger.Error(ex, "LMSubs: translation failed for {Item} ({Lang})", job.ItemName, job.TargetLanguage);
             job.Error = ex.Message;
             Finish(job, "error");
         }
@@ -602,6 +611,7 @@ public class SubtitleService
             var batch = cues.Skip(offset).Take(batchSize).ToList();
             var texts = batch.Select(c => c.Text).ToList();
             var translations = await _openAi.TranslateBatchAsync(texts, context, targetLanguage, config, ct).ConfigureAwait(false);
+            _logger.Debug("LMSubs: translate batch {From}-{To}/{Total} ({Lang}) ok", offset + 1, Math.Min(offset + batch.Count, cues.Count), cues.Count, targetLanguage);
             onBatch?.Invoke((double)Math.Min(offset + batch.Count, cues.Count) / cues.Count);
 
             for (var i = 0; i < batch.Count; i++)

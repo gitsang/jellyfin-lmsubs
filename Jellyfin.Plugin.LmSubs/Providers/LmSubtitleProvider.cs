@@ -83,7 +83,14 @@ public class LmSubtitleProvider : ISubtitleProvider
             throw new FileNotFoundException("Unknown LMSubs subtitle id: " + id);
         }
 
-        var job = _service.EnsureRunning(itemId, translate, lang);
+        var job = _service.EnsureRunning(itemId, out var created, translate, lang);
+
+        // Debounce: an in-flight download already waits on this job and will save the
+        // subtitle when it completes. A second waiter would save a duplicate track.
+        if (!created && job.Status is "queued" or "running")
+        {
+            throw new InvalidOperationException("Generation already in progress — search again to see progress; the subtitle is saved automatically when it finishes.");
+        }
 
         // The pipeline outlives this request: if the client/proxy times out, generation
         // continues and a later download attempt picks up the finished result.
