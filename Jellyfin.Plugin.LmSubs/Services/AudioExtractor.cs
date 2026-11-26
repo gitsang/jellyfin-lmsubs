@@ -1,20 +1,20 @@
 using System.Diagnostics;
 using Jellyfin.Plugin.LmSubs.Configuration;
-using MediaBrowser.Common.Configuration;
-using MediaBrowser.Controller.Configuration;
-using MediaBrowser.Model.Configuration;
+using MediaBrowser.Controller.MediaEncoding;
 
 namespace Jellyfin.Plugin.LmSubs.Services;
 
 public class AudioExtractor
 {
-    private readonly IServerConfigurationManager _configurationManager;
+    private readonly IMediaEncoder _mediaEncoder;
 
-    public AudioExtractor(IServerConfigurationManager configurationManager)
+    public AudioExtractor(IMediaEncoder mediaEncoder)
     {
-        _configurationManager = configurationManager;
+        _mediaEncoder = mediaEncoder;
     }
 
+    // Jellyfin's resolved encoder (config, bundled jellyfin-ffmpeg, or PATH) — bare
+    // "ffmpeg" is not on PATH inside the official container.
     public string ResolveFfmpegPath(PluginConfiguration config)
     {
         if (!string.IsNullOrWhiteSpace(config.FfmpegPath))
@@ -22,30 +22,30 @@ public class AudioExtractor
             return config.FfmpegPath;
         }
 
-        try
+        var encoder = _mediaEncoder.EncoderPath;
+        return string.IsNullOrWhiteSpace(encoder) ? "ffmpeg" : encoder;
+    }
+
+    private string ResolveFfprobePath(PluginConfiguration config)
+    {
+        if (string.IsNullOrWhiteSpace(config.FfmpegPath))
         {
-            var encoding = (EncodingOptions)_configurationManager.GetConfiguration("encoding");
-            if (encoding != null && !string.IsNullOrWhiteSpace(encoding.EncoderAppPath))
+            var probe = _mediaEncoder.ProbePath;
+            if (!string.IsNullOrWhiteSpace(probe))
             {
-                return encoding.EncoderAppPath;
+                return probe;
             }
         }
-        catch
-        {
-        }
 
-        return "ffmpeg";
+        var ffmpeg = ResolveFfmpegPath(config);
+        var ffprobe = Path.Combine(Path.GetDirectoryName(ffmpeg) ?? string.Empty,
+            Path.GetFileName(ffmpeg).Replace("ffmpeg", "ffprobe", StringComparison.OrdinalIgnoreCase));
+        return File.Exists(ffprobe) ? ffprobe : "ffprobe";
     }
 
     public async Task<double> GetDurationSecondsAsync(string mediaPath, PluginConfiguration config, CancellationToken ct)
     {
-        var ffmpeg = ResolveFfmpegPath(config);
-        var ffprobe = Path.Combine(Path.GetDirectoryName(ffmpeg) ?? string.Empty,
-            Path.GetFileName(ffmpeg).Replace("ffmpeg", "ffprobe", StringComparison.OrdinalIgnoreCase));
-        if (!File.Exists(ffprobe))
-        {
-            ffprobe = "ffprobe";
-        }
+        var ffprobe = ResolveFfprobePath(config);
 
         try
         {

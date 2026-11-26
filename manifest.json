@@ -8,6 +8,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "1.3.2.1",
+        "changelog": "Fix ffmpeg not found: use Jellyfin's resolved encoder/probe paths (IMediaEncoder) instead of bare 'ffmpeg', which is not on PATH in the official container.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.3.2.1/lmsubs_1.3.2.1.zip",
+        "checksum": "db5693c1f1b93a327aa036111001063b",
+        "timestamp": "2026-11-26T16:04:43Z"
+      },
+      {
         "version": "1.3.2.0",
         "changelog": "Search entry renamed to 'LM Subtitles' with model/target details in the description. Target language comes from the search dialog language (setting removed). Re-search while generating shows live ASR/Translate progress percentages.",
         "targetAbi": "10.11.0.0",
