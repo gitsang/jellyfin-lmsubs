@@ -1,11 +1,20 @@
 using System.ComponentModel.DataAnnotations;
+using Jellyfin.Plugin.LmSubs.Providers;
 using Jellyfin.Plugin.LmSubs.Services;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LmSubs.Api;
 
-/// <summary>REST endpoints used by the injected web player script and the config page.</summary>
+/// <summary>
+/// REST helpers. Normal playback needs none of these — selecting the LM subtitle
+/// track in any client drives everything via playback events. These endpoints are
+/// for scripts, debugging and external players.
+/// </summary>
 [ApiController]
 [Authorize]
 [Route("LmSubs")]
@@ -14,23 +23,39 @@ public class LmSubsController : ControllerBase
 {
     private readonly SubtitleService _subtitles;
     private readonly OpenAiClient _openAi;
+    private readonly IItemRepository _itemRepo;
+    private readonly ILibraryManager _libraryManager;
+    private readonly ILogger<LmSubsController> _logger;
 
-    public LmSubsController(SubtitleService subtitles, OpenAiClient openAi)
+    public LmSubsController(
+        SubtitleService subtitles,
+        OpenAiClient openAi,
+        IItemRepository itemRepo,
+        ILibraryManager libraryManager,
+        ILogger<LmSubsController> logger)
     {
         _subtitles = subtitles;
         _openAi = openAi;
+        _itemRepo = itemRepo;
+        _libraryManager = libraryManager;
+        _logger = logger;
     }
 
-    public record GenerateRequest([Required] Guid ItemId, int? AudioStreamIndex, bool Translate = true, string? TargetLanguage = null);
+    public record GenerateRequest(
+        [Required] Guid ItemId,
+        double? Position = null,
+        bool Live = false,
+        bool Translate = true,
+        string? TargetLanguage = null);
 
-    /// <summary>Queue full-video ASR generation (optionally followed by translation).</summary>
+    /// <summary>Start / resume the pipeline (Live=true re-transcribes from Position and overwrites).</summary>
     [HttpPost("Generate")]
     public ActionResult Generate([FromBody] GenerateRequest request)
     {
         try
         {
-            var job = _subtitles.StartGeneration(request.ItemId, request.AudioStreamIndex, request.Translate, request.TargetLanguage);
-            return Ok(JobDto(job));
+            var job = _subtitles.EnsureRunning(request.ItemId, request.Position, request.Live, request.TargetLanguage, request.Translate);
+            return Ok(job == null ? new { status = "none" } : JobDto(job));
         }
         catch (Exception ex)
         {
@@ -43,7 +68,7 @@ public class LmSubsController : ControllerBase
     public ActionResult Status([FromRoute] Guid itemId)
     {
         var job = _subtitles.GetJob(itemId);
-        var hasSource = _subtitles.GetCachedSrt(itemId, false, string.Empty) != null;
+        var hasSource = _subtitles.Store.GetSrt(itemId, false, string.Empty) != null;
         if (job == null)
         {
             return Ok(new { status = hasSource ? "done" : "none", hasSource });
@@ -56,6 +81,20 @@ public class LmSubsController : ControllerBase
 
     [HttpPost("Cancel/{itemId:guid}")]
     public ActionResult Cancel([FromRoute] Guid itemId) => Ok(new { cancelled = _subtitles.Cancel(itemId) });
+
+    /// <summary>Install (or repair) the two LM subtitle tracks on an item.</summary>
+    [HttpPost("Install/{itemId:guid}")]
+    public ActionResult Install([FromRoute] Guid itemId)
+    {
+        if (_libraryManager.GetItemById(itemId) is not Video video)
+        {
+            return NotFound(new { error = "不是视频项" });
+        }
+
+        var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+        var changed = LmTrackInstaller.EnsureTracks(video, _itemRepo, _subtitles.Store, config.TargetLanguage, _logger);
+        return Ok(new { changed });
+    }
 
     public record TranslateRequest([Required] Guid ItemId, string? TargetLanguage = null);
 
@@ -74,61 +113,34 @@ public class LmSubsController : ControllerBase
         }
     }
 
-    /// <summary>Fetch generated subtitles as WebVTT for the HTML5 player.</summary>
+    /// <summary>Fetch generated subtitles as WebVTT / SRT (external players, debugging).</summary>
     [HttpGet("Subtitles/{itemId:guid}")]
     [AllowAnonymous] // <track> requests cannot carry auth headers; item ids are unguessable GUIDs
     public ActionResult Subtitles(
         [FromRoute] Guid itemId,
-        [FromQuery] bool translated = false,
+        [FromQuery] string mode = "cached",
         [FromQuery] string? lang = null,
         [FromQuery] string format = "vtt")
     {
-        var lang2 = lang ?? Plugin.Instance?.Configuration.TargetLanguage ?? "Chinese (Simplified)";
+        var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+        var targetLang = lang ?? config.TargetLanguage;
+        var live = string.Equals(mode, "live", StringComparison.OrdinalIgnoreCase);
+        var translated = !string.Equals(mode, "source", StringComparison.OrdinalIgnoreCase);
+
+        // Serving subtitles also nudges the pipeline (position unknown here).
+        if (translated)
+        {
+            try { _subtitles.EnsureRunning(itemId, null, force: false); } catch { /* item may be gone */ }
+        }
+
         if (string.Equals(format, "srt", StringComparison.OrdinalIgnoreCase))
         {
-            var srt = _subtitles.GetCachedSrt(itemId, translated, lang2);
+            var srt = _subtitles.Store.GetSrt(itemId, translated, targetLang, live);
             return srt == null ? NotFound() : Content(srt, "application/x-subrip; charset=utf-8");
         }
 
-        var vtt = _subtitles.GetCachedVtt(itemId, translated, lang2);
+        var vtt = _subtitles.Store.GetVtt(itemId, translated, targetLang, live);
         return vtt == null ? NotFound() : Content(vtt, "text/vtt; charset=utf-8");
-    }
-
-    public record RealtimeRequest(
-        [Required] Guid ItemId,
-        int? AudioStreamIndex,
-        double Start,
-        double Window = 30,
-        bool Translate = true,
-        string? TargetLanguage = null);
-
-    /// <summary>
-    /// On-demand transcription of a short window around the playback position.
-    /// Used by the web script for "realtime" subtitles without a full pass.
-    /// </summary>
-    [HttpPost("Realtime")]
-    public async Task<ActionResult> Realtime([FromBody] RealtimeRequest request, CancellationToken ct)
-    {
-        try
-        {
-            var cues = await _subtitles.TranscribeWindowAsync(
-                request.ItemId, request.AudioStreamIndex, request.Start, request.Window,
-                request.Translate, request.TargetLanguage, ct).ConfigureAwait(false);
-            return Ok(new
-            {
-                start = request.Start,
-                window = request.Window,
-                cues = cues.Select(c => new { start = c.Start, end = c.End, text = c.Text })
-            });
-        }
-        catch (OperationCanceledException)
-        {
-            return StatusCode(499);
-        }
-        catch (Exception ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
     }
 
     /// <summary>Connectivity test for both configured endpoints (used by the config page).</summary>
@@ -155,7 +167,6 @@ public class LmSubsController : ControllerBase
         ["stage"] = job.Stage,
         ["progress"] = Math.Round(job.Progress, 3),
         ["error"] = job.Error,
-        ["translate"] = job.Translate,
         ["targetLanguage"] = job.TargetLanguage,
         ["startedUtc"] = job.StartedUtc,
         ["finishedUtc"] = job.FinishedUtc

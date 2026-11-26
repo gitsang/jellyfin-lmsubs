@@ -13,6 +13,9 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddHttpClient();
         serviceCollection.AddSingleton<OpenAiClient>();
         serviceCollection.AddSingleton<AudioExtractor>();
+        serviceCollection.AddSingleton<SubtitleStore>();
         serviceCollection.AddSingleton<SubtitleService>();
+        serviceCollection.AddSingleton<Providers.LmSubtitleProvider>();
+        serviceCollection.AddHostedService<LmPlaybackMonitor>();
     }
 }

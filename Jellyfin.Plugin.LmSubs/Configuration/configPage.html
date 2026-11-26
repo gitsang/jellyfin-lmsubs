@@ -16,7 +16,10 @@
                 <div class="verticalSection">
                     <p>所有接口均为 OpenAI Compatible：Base URL 填到 <code>/v1</code> 即可（插件自动拼接
                         <code>/audio/transcriptions</code> 与 <code>/chat/completions</code>，填完整 endpoint 也兼容）。</p>
-                    <p>播放页的字幕按钮由 <code>web/lmsubs.js</code> 注入脚本提供，安装方式见仓库 README。</p>
+                    <p>无需修改 Web：插件会在视频的字幕列表里加入两条字幕轨——
+                        <b>「LM 字幕」</b>（选择即从当前播放位置开始转写＋翻译，已生成的部分直接用缓存，全部完成后不再调 API）和
+                        <b>「LM 字幕（实时）」</b>（每次选择/拖动进度都重新转写并覆盖）。
+                        在任意客户端的字幕选择器里选中即可，字幕会随生成逐步补齐（拖动一下进度条可立即刷新）。</p>
                 </div>
 
                 <h3 class="sectionTitle">语音识别 ASR</h3>

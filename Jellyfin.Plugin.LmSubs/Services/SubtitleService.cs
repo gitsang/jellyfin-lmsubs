@@ -1,22 +1,19 @@
 using System.Collections.Concurrent;
-using System.Globalization;
-using System.Text.RegularExpressions;
 using Jellyfin.Plugin.LmSubs.Configuration;
-using MediaBrowser.Common.Configuration;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LmSubs.Services;
 
-/// <summary>State of one full-video generation job.</summary>
+/// <summary>State of the generation pipeline for one item.</summary>
 public class GenerationJob
 {
     public Guid ItemId { get; init; }
 
     public string ItemName { get; set; } = string.Empty;
 
-    /// <summary>queued | extracting | transcribing | translating | done | error | cancelled.</summary>
+    /// <summary>queued | running | done | error | cancelled.</summary>
     public string Status { get; set; } = "queued";
 
     public string Stage { get; set; } = string.Empty;
@@ -29,38 +26,46 @@ public class GenerationJob
 
     public DateTime? FinishedUtc { get; set; }
 
-    public bool Translate { get; set; }
-
     public string TargetLanguage { get; set; } = string.Empty;
+
+    /// <summary>Playback position this pass was started from.</summary>
+    public double StartSeconds { get; init; }
 
     public CancellationTokenSource Cts { get; } = new();
 }
 
 /// <summary>
-/// Core pipeline: full-video ASR generation, LLM translation, subtitle caching,
-/// and on-demand realtime window transcription for the web player script.
+/// Chunk-based, position-prioritized ASR + translation pipeline.
+///
+/// Selecting the "LM 字幕" track starts the pipeline near the current playback
+/// position; completed ranges are cached on disk and never re-sent to the API.
+/// Each chunk is appended to the subtitle files as soon as it finishes, so the
+/// player picks up new subtitles as it re-requests the growing file.
+///
+/// Selecting "LM 字幕（实时）" always re-transcribes from the current position
+/// and overwrites the cache (force mode).
 /// </summary>
 public class SubtitleService
 {
     private readonly ILibraryManager _libraryManager;
-    private readonly IApplicationPaths _appPaths;
+    private readonly SubtitleStore _store;
     private readonly OpenAiClient _openAi;
     private readonly AudioExtractor _extractor;
     private readonly ILogger<SubtitleService> _logger;
 
     private readonly ConcurrentDictionary<Guid, GenerationJob> _jobs = new();
-    private readonly SemaphoreSlim _runGate = new(1, 1);
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _windowLocks = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _itemLocks = new();
+    private readonly ConcurrentDictionary<Guid, double> _lastStartSeconds = new();
 
     public SubtitleService(
         ILibraryManager libraryManager,
-        IApplicationPaths appPaths,
+        SubtitleStore store,
         OpenAiClient openAi,
         AudioExtractor extractor,
         ILogger<SubtitleService> logger)
     {
         _libraryManager = libraryManager;
-        _appPaths = appPaths;
+        _store = store;
         _openAi = openAi;
         _extractor = extractor;
         _logger = logger;
@@ -69,36 +74,18 @@ public class SubtitleService
     private static PluginConfiguration Config =>
         Plugin.Instance?.Configuration ?? new PluginConfiguration();
 
-    private string CacheRoot
-    {
-        get
-        {
-            var dir = Path.Combine(_appPaths.DataPath, "plugins", "lmsubs", "cache");
-            Directory.CreateDirectory(dir);
-            return dir;
-        }
-    }
+    public SubtitleStore Store => _store;
 
-    private string ItemDir(Guid itemId)
-    {
-        var dir = Path.Combine(CacheRoot, itemId.ToString("N"));
-        Directory.CreateDirectory(dir);
-        return dir;
-    }
+    // ------------------------------------------------------------------ media resolution
 
-    private static string LangSlug(string lang)
-    {
-        var slug = Regex.Replace(lang.Trim().ToLowerInvariant(), "[^a-z0-9\\u4e00-\\u9fff]+", "-").Trim('-');
-        return slug.Length == 0 ? "default" : slug;
-    }
-
-    // ------------------------------------------------------------------ lookup helpers
+    private Video GetVideo(Guid itemId) =>
+        _libraryManager.GetItemById(itemId) as Video
+        ?? throw new KeyNotFoundException($"找不到视频项 {itemId}");
 
     public (string Path, int? AudioStreamIndex, double Duration) ResolveMedia(Guid itemId, int? audioStreamIndex)
     {
-        var item = _libraryManager.GetItemById(itemId)
-                   ?? throw new KeyNotFoundException($"找不到媒体项 {itemId}");
-        var sources = item.GetMediaSources(true);
+        var video = GetVideo(itemId);
+        var sources = video.GetMediaSources(true);
         var source = sources.FirstOrDefault() ?? throw new InvalidOperationException("媒体项没有可用的 MediaSource");
         var path = source.Path;
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
@@ -110,51 +97,77 @@ public class SubtitleService
         return (path, audioStreamIndex, duration);
     }
 
-    public string? GetCachedSrt(Guid itemId, bool translated, string targetLanguage)
+    /// <summary>
+    /// Best-effort current playback position for an item, learned from subtitle
+    /// delivery requests (startTimeTicks) and the REST API.
+    /// </summary>
+    public void ReportPlaybackPosition(Guid itemId, double seconds)
     {
-        var file = Path.Combine(ItemDir(itemId),
-            translated ? $"translated.{LangSlug(targetLanguage)}.srt" : "source.srt");
-        return File.Exists(file) ? File.ReadAllText(file) : null;
+        if (seconds >= 0)
+        {
+            _lastStartSeconds[itemId] = seconds;
+        }
     }
 
-    public string? GetCachedVtt(Guid itemId, bool translated, string targetLanguage)
+    public double GetPlaybackPosition(Guid itemId) =>
+        _lastStartSeconds.TryGetValue(itemId, out var s) ? s : 0;
+
+    // ------------------------------------------------------------------ language helper
+
+    /// <summary>Best-effort ISO-639-2 code for the configured target language (metadata only).</summary>
+    public static string ThreeLetterLanguage(string language)
     {
-        var srt = GetCachedSrt(itemId, translated, targetLanguage);
-        return srt == null ? null : SubtitleText.ToVtt(SubtitleText.ParseSrt(srt));
+        var l = (language ?? string.Empty).ToLowerInvariant();
+        if (l.Contains("chinese") || l.Contains("中文") || l.Contains("汉语") || l.Contains("漢"))
+        {
+            return "chi";
+        }
+
+        if (l.Contains("english") || l.Contains("英"))
+        {
+            return "eng";
+        }
+
+        if (l.Contains("japan") || l.Contains("日"))
+        {
+            return "jpn";
+        }
+
+        if (l.Contains("korean") || l.Contains("韩") || l.Contains("韓"))
+        {
+            return "kor";
+        }
+
+        if (l.Contains("french") || l.Contains("法"))
+        {
+            return "fre";
+        }
+
+        if (l.Contains("german") || l.Contains("德"))
+        {
+            return "ger";
+        }
+
+        if (l.Contains("spanish") || l.Contains("西班牙"))
+        {
+            return "spa";
+        }
+
+        if (l.Contains("russian") || l.Contains("俄"))
+        {
+            return "rus";
+        }
+
+        return "und";
     }
+
+    // ------------------------------------------------------------------ job control
 
     public GenerationJob? GetJob(Guid itemId) => _jobs.TryGetValue(itemId, out var j) ? j : null;
 
-    // ------------------------------------------------------------------ full generation
-
-    public GenerationJob StartGeneration(Guid itemId, int? audioStreamIndex, bool translate, string? targetLanguage)
-    {
-        if (_jobs.TryGetValue(itemId, out var existing) &&
-            existing.Status is "queued" or "extracting" or "transcribing" or "translating")
-        {
-            return existing;
-        }
-
-        var config = Config;
-        var job = new GenerationJob
-        {
-            ItemId = itemId,
-            Translate = translate,
-            TargetLanguage = string.IsNullOrWhiteSpace(targetLanguage) ? config.TargetLanguage : targetLanguage!
-        };
-
-        var (path, streamIdx, duration) = ResolveMedia(itemId, audioStreamIndex);
-        job.ItemName = _libraryManager.GetItemById(itemId)?.Name ?? itemId.ToString();
-        _jobs[itemId] = job;
-
-        _ = Task.Run(() => RunGenerationAsync(job, path, streamIdx, duration));
-        return job;
-    }
-
     public bool Cancel(Guid itemId)
     {
-        if (_jobs.TryGetValue(itemId, out var job) &&
-            job.Status is "queued" or "extracting" or "transcribing" or "translating")
+        if (_jobs.TryGetValue(itemId, out var job) && job.Status is "queued" or "running")
         {
             job.Cts.Cancel();
             job.Status = "cancelled";
@@ -165,9 +178,118 @@ public class SubtitleService
         return false;
     }
 
-    private async Task RunGenerationAsync(GenerationJob job, string mediaPath, int? audioStreamIndex, double duration)
+    /// <summary>
+    /// Ensure the pipeline is running (or has completed) for an item.
+    /// force=true (实时轨) always starts a fresh pass from startPosition and overwrites.
+    /// Returns immediately; work happens in the background.
+    /// </summary>
+    public GenerationJob? EnsureRunning(Guid itemId, double? startPosition, bool force, string? targetLanguage = null, bool translate = true)
     {
-        await _runGate.WaitAsync(job.Cts.Token).ConfigureAwait(false);
+        var config = Config;
+        var lang = string.IsNullOrWhiteSpace(targetLanguage) ? config.TargetLanguage : targetLanguage!;
+
+        if (startPosition.HasValue)
+        {
+            ReportPlaybackPosition(itemId, startPosition.Value);
+        }
+
+        var start = startPosition ?? GetPlaybackPosition(itemId);
+
+        // Serialize job control per item; events arrive concurrently.
+        var controlLock = _itemLocks.GetOrAdd(itemId, _ => new SemaphoreSlim(1, 1));
+        controlLock.Wait();
+        try
+        {
+            if (_jobs.TryGetValue(itemId, out var existing))
+            {
+                if (existing.Status is "queued" or "running")
+                {
+                    if (!force)
+                    {
+                        return existing;
+                    }
+
+                    // live re-trigger while running: only restart on a real seek (>20s)
+                    var runningStart = existing.StartSeconds;
+                    if (Math.Abs(start - runningStart) <= 20)
+                    {
+                        return existing;
+                    }
+
+                    existing.Cts.Cancel();
+                }
+                else if (!force && existing.Status == "done" && IsComplete(itemId))
+                {
+                    return existing; // fully cached — no API calls
+                }
+            }
+
+            var (path, streamIdx, duration) = ResolveMedia(itemId, null);
+            var job = new GenerationJob
+            {
+                ItemId = itemId,
+                TargetLanguage = lang,
+                StartSeconds = start,
+                ItemName = GetVideo(itemId).Name ?? itemId.ToString()
+            };
+
+            _jobs[itemId] = job;
+            _ = Task.Run(() => RunPipelineAsync(job, path, streamIdx, duration, start, force, translate));
+            return job;
+        }
+        finally
+        {
+            controlLock.Release();
+        }
+    }
+
+    /// <summary>True when the on-disk cues cover the whole media duration.</summary>
+    public bool IsComplete(Guid itemId)
+    {
+        try
+        {
+            var (_, _, duration) = ResolveMedia(itemId, null);
+            if (duration <= 0)
+            {
+                return false;
+            }
+
+            var cues = _store.LoadCues(itemId, Config.TargetLanguage);
+            return cues.Count > 0 && cues.Max(c => c.End) >= duration - Math.Max(30, duration * 0.02);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // ------------------------------------------------------------------ pipeline
+
+    private async Task RunPipelineAsync(
+        GenerationJob job, string mediaPath, int? audioStreamIndex,
+        double duration, double startSeconds, bool force, bool translate)
+    {
+        var itemLock = _itemLocks.GetOrAdd(job.ItemId, _ => new SemaphoreSlim(1, 1));
+        try
+        {
+            await itemLock.WaitAsync(job.Cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            job.Status = "cancelled";
+            job.FinishedUtc = DateTime.UtcNow;
+            return;
+        }
+
+        // A newer job may have superseded this one while we waited for the lock.
+        if (job.Cts.IsCancellationRequested || !ReferenceEquals(GetJob(job.ItemId), job))
+        {
+            itemLock.Release();
+            job.Status = "cancelled";
+            job.FinishedUtc = DateTime.UtcNow;
+            return;
+        }
+
         var config = Config;
         var tempDir = Path.Combine(Path.GetTempPath(), "lmsubs-" + job.ItemId.ToString("N"));
         Directory.CreateDirectory(tempDir);
@@ -175,6 +297,8 @@ public class SubtitleService
         try
         {
             var ct = job.Cts.Token;
+            job.Status = "running";
+
             if (duration <= 0)
             {
                 duration = await _extractor.GetDurationSecondsAsync(mediaPath, config, ct).ConfigureAwait(false);
@@ -187,69 +311,106 @@ public class SubtitleService
 
             var chunk = Math.Clamp(config.ChunkSeconds, 30, 3600);
             var chunkCount = (int)Math.Ceiling(duration / chunk);
-            job.Status = "extracting";
-            job.Stage = $"切分音频（{chunkCount} 段 × {chunk}s）";
+            var startChunk = Math.Clamp((int)(Math.Max(0, startSeconds) / chunk), 0, chunkCount - 1);
 
-            // Extract all chunks first (fast, local), then transcribe with bounded parallelism.
-            var chunkFiles = new string[chunkCount];
-            for (var i = 0; i < chunkCount; i++)
+            // Chunk order: current position first, then forward to the end, then wrap
+            // around to cover everything before the start position.
+            var order = Enumerable.Range(startChunk, chunkCount - startChunk)
+                .Concat(Enumerable.Range(0, startChunk))
+                .ToList();
+
+            // Coverage from cached cues (normal mode). Force mode ignores the cache.
+            var covered = new bool[chunkCount];
+            if (!force)
+            {
+                var cachedCues = _store.LoadCues(job.ItemId, job.TargetLanguage);
+                foreach (var i in order)
+                {
+                    var cs = (double)i * chunk;
+                    var ce = Math.Min(cs + chunk, duration);
+                    // A chunk counts as covered when cues reach its end (silent tails included).
+                    covered[i] = cachedCues.Any(c => c.End >= ce - 1.0 && c.Start < ce);
+                }
+            }
+
+            var pending = order.Where(i => !covered[i]).ToList();
+            if (pending.Count == 0)
+            {
+                job.Status = "done";
+                job.Progress = 1;
+                job.Stage = "已全部缓存";
+                job.FinishedUtc = DateTime.UtcNow;
+                return;
+            }
+
+            var doneCount = chunkCount - pending.Count;
+            var sourceCues = force ? new List<SubtitleCue>() : _store.LoadSourceCues(job.ItemId);
+            var translatedCues = _store.LoadCues(job.ItemId, job.TargetLanguage);
+            var context = new List<(string Src, string Dst)>();
+            var ctxMax = Math.Clamp(config.ContextPairs, 0, 30);
+
+            foreach (var i in pending)
             {
                 ct.ThrowIfCancellationRequested();
-                var start = (double)i * chunk;
-                var len = Math.Min(chunk, duration - start);
+                var cs = (double)i * chunk;
+                var len = Math.Min(chunk, duration - cs);
+                job.Stage = $"转写 {fmt(cs)}–{fmt(cs + len)}（{doneCount + 1}/{chunkCount}）";
+
                 var file = Path.Combine(tempDir, $"chunk_{i:0000}.mp3");
-                await _extractor.ExtractAsync(mediaPath, audioStreamIndex, start, len, file, config, ct).ConfigureAwait(false);
-                chunkFiles[i] = file;
-                job.Progress = 0.1 * (i + 1) / chunkCount;
-            }
-
-            job.Status = "transcribing";
-            job.Stage = $"语音转写 0/{chunkCount}";
-            var results = new List<AsrSegment>[chunkCount];
-            var done = 0;
-            var parallelism = Math.Clamp(config.MaxParallelChunks, 1, 8);
-            await Parallel.ForEachAsync(Enumerable.Range(0, chunkCount),
-                new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
-                async (i, token) =>
+                await _extractor.ExtractAsync(mediaPath, audioStreamIndex, cs, len, file, config, ct).ConfigureAwait(false);
+                List<AsrSegment> segments;
+                try
                 {
-                    var start = (double)i * chunk;
-                    var len = Math.Min(chunk, duration - start);
-                    results[i] = await _openAi.TranscribeAsync(chunkFiles[i], start, len, config, token).ConfigureAwait(false);
-                    var n = Interlocked.Increment(ref done);
-                    job.Progress = 0.1 + 0.7 * n / chunkCount;
-                    job.Stage = $"语音转写 {n}/{chunkCount}";
-                }).ConfigureAwait(false);
+                    segments = await _openAi.TranscribeAsync(file, cs, len, config, ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    try { File.Delete(file); } catch { /* best effort */ }
+                }
 
-            var segments = results.Where(r => r != null).SelectMany(r => r).ToList();
-            var cues = SubtitleText.Normalize(segments);
-            if (cues.Count == 0)
-            {
-                throw new InvalidOperationException("ASR 没有返回任何文本（检查模型/音频流）");
-            }
+                var cues = SubtitleText.Normalize(segments);
+                if (cues.Count > 0)
+                {
+                    sourceCues.AddRange(cues);
+                    _store.SaveSourceCues(job.ItemId, sourceCues);
 
-            var sourceSrt = SubtitleText.ToSrt(cues);
-            await File.WriteAllTextAsync(Path.Combine(ItemDir(job.ItemId), "source.srt"), sourceSrt, ct).ConfigureAwait(false);
-            _logger.LogInformation("LMSubs: generated {Count} cues for {Item}", cues.Count, job.ItemName);
+                    var finalCues = translate
+                        ? await TranslateCuesWithContextAsync(cues, job.TargetLanguage, context, ctxMax, ct).ConfigureAwait(false)
+                        : cues;
 
-            if (job.Translate)
-            {
-                job.Status = "translating";
-                job.Stage = "翻译中";
-                var translated = await TranslateCuesAsync(cues, job.TargetLanguage,
-                    p =>
+                    // Merge into the served track; force mode replaces the chunk's time range.
+                    translatedCues = MergeRange(translatedCues, finalCues, cs, cs + len, replace: force);
+                    _store.SaveCues(job.ItemId, job.TargetLanguage, translatedCues);
+                    _store.Render(job.ItemId, null, translated: true, live: false, job.TargetLanguage, translatedCues);
+                    if (force)
                     {
-                        job.Progress = 0.8 + 0.2 * p;
-                        job.Stage = $"翻译中 {p:P0}";
-                    }, ct).ConfigureAwait(false);
-                await File.WriteAllTextAsync(
-                    Path.Combine(ItemDir(job.ItemId), $"translated.{LangSlug(job.TargetLanguage)}.srt"),
-                    SubtitleText.ToSrt(translated), ct).ConfigureAwait(false);
+                        _store.Render(job.ItemId, null, translated: true, live: true, job.TargetLanguage, translatedCues);
+                    }
+                }
+                else if (force)
+                {
+                    // silent chunk: drop stale content in this range
+                    translatedCues = MergeRange(translatedCues, Array.Empty<SubtitleCue>(), cs, cs + len, replace: true);
+                    _store.SaveCues(job.ItemId, job.TargetLanguage, translatedCues);
+                    _store.Render(job.ItemId, null, translated: true, live: false, job.TargetLanguage, translatedCues);
+                    _store.Render(job.ItemId, null, translated: true, live: true, job.TargetLanguage, translatedCues);
+                }
+
+                doneCount++;
+                job.Progress = (double)doneCount / chunkCount;
+                _logger.LogDebug("LMSubs: {Item} chunk {Index}/{Total} done ({Count} cues)",
+                    job.ItemName, i + 1, chunkCount, cues.Count);
             }
 
-            job.Progress = 1;
+            // Final render: both track files always reflect the merged result.
+            _store.Render(job.ItemId, null, translated: true, live: false, job.TargetLanguage, translatedCues);
+            _store.Render(job.ItemId, null, translated: true, live: true, job.TargetLanguage, translatedCues);
+
             job.Status = "done";
+            job.Progress = 1;
             job.Stage = "完成";
             job.FinishedUtc = DateTime.UtcNow;
+            _logger.LogInformation("LMSubs: pipeline finished for {Item}", job.ItemName);
         }
         catch (OperationCanceledException)
         {
@@ -258,7 +419,7 @@ public class SubtitleService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "LMSubs: generation failed for {Item}", job.ItemName);
+            _logger.LogError(ex, "LMSubs: pipeline failed for {Item}", job.ItemName);
             job.Status = "error";
             job.Error = ex.Message;
             job.FinishedUtc = DateTime.UtcNow;
@@ -266,19 +427,42 @@ public class SubtitleService
         finally
         {
             try { Directory.Delete(tempDir, true); } catch { /* best effort */ }
-            _runGate.Release();
+            itemLock.Release();
         }
+
+        static string fmt(double s) => TimeSpan.FromSeconds(s).ToString(@"hh\:mm\:ss");
     }
 
-    // ------------------------------------------------------------------ translation
+    /// <summary>Merge new cues; replace=true removes old cues inside [start,end) first (live overwrite).</summary>
+    internal static List<SubtitleCue> MergeRange(List<SubtitleCue> existing, IEnumerable<SubtitleCue> incoming, double start, double end, bool replace)
+    {
+        var result = replace
+            ? existing.Where(c => c.End <= start + 0.01 || c.Start >= end - 0.01).ToList()
+            : existing.ToList();
 
-    public async Task<List<SubtitleCue>> TranslateCuesAsync(
-        List<SubtitleCue> cues, string targetLanguage, Action<double>? progress, CancellationToken ct)
+        foreach (var c in incoming)
+        {
+            if (string.IsNullOrWhiteSpace(c.Text))
+            {
+                continue;
+            }
+
+            var dup = result.Any(e => Math.Abs(e.Start - c.Start) < 0.25 && string.Equals(e.Text, c.Text, StringComparison.Ordinal));
+            if (!dup)
+            {
+                result.Add(c);
+            }
+        }
+
+        return result.OrderBy(c => c.Start).ThenBy(c => c.End).ToList();
+    }
+
+    private async Task<List<SubtitleCue>> TranslateCuesWithContextAsync(
+        List<SubtitleCue> cues, string targetLanguage,
+        List<(string Src, string Dst)> context, int ctxMax, CancellationToken ct)
     {
         var config = Config;
         var batchSize = Math.Clamp(config.TranslateBatchSize, 1, 100);
-        var context = new List<(string Src, string Dst)>();
-        var ctxMax = Math.Clamp(config.ContextPairs, 0, 30);
         var output = new List<SubtitleCue>(cues.Count);
 
         for (var offset = 0; offset < cues.Count; offset += batchSize)
@@ -306,108 +490,27 @@ public class SubtitleService
                     }
                 }
             }
-
-            progress?.Invoke((double)Math.Min(offset + batchSize, cues.Count) / cues.Count);
         }
 
         return output;
     }
 
-    /// <summary>Translate an existing cached source subtitle file (no ASR).</summary>
+    /// <summary>Translate the cached source subtitles in one pass (REST helper).</summary>
     public async Task<string> TranslateCachedAsync(Guid itemId, string? targetLanguage, CancellationToken ct)
     {
         var config = Config;
         var lang = string.IsNullOrWhiteSpace(targetLanguage) ? config.TargetLanguage : targetLanguage!;
-        var srt = GetCachedSrt(itemId, false, lang)
-                  ?? throw new FileNotFoundException("还没有原文字幕，请先执行全量转写");
-        var cues = SubtitleText.ParseSrt(srt);
-        var translated = await TranslateCuesAsync(cues, lang, null, ct).ConfigureAwait(false);
-        var result = SubtitleText.ToSrt(translated);
-        await File.WriteAllTextAsync(Path.Combine(ItemDir(itemId), $"translated.{LangSlug(lang)}.srt"), result, ct).ConfigureAwait(false);
-        return result;
-    }
-
-    // ------------------------------------------------------------------ realtime window
-
-    /// <summary>
-    /// Transcribe (and optionally translate) a short window around the playback position.
-    /// Results are cached per window so seeking back and forth is cheap.
-    /// </summary>
-    public async Task<List<SubtitleCue>> TranscribeWindowAsync(
-        Guid itemId, int? audioStreamIndex, double startSeconds, double windowSeconds,
-        bool translate, string? targetLanguage, CancellationToken ct)
-    {
-        var config = Config;
-        var lang = string.IsNullOrWhiteSpace(targetLanguage) ? config.TargetLanguage : targetLanguage!;
-        windowSeconds = Math.Clamp(windowSeconds, 5, 120);
-        startSeconds = Math.Max(0, startSeconds);
-
-        var key = string.Create(CultureInfo.InvariantCulture,
-            $"{itemId:N}:{audioStreamIndex?.ToString() ?? "a0"}:{startSeconds:0.##}:{windowSeconds:0.##}:{translate}:{LangSlug(lang)}");
-        var cacheFile = Path.Combine(ItemDir(itemId), "windows", key.Replace(':', '_') + ".json");
-        if (File.Exists(cacheFile))
+        var cues = _store.LoadSourceCues(itemId);
+        if (cues.Count == 0)
         {
-            try
-            {
-                var cached = System.Text.Json.JsonSerializer.Deserialize<List<SubtitleCue>>(
-                    await File.ReadAllTextAsync(cacheFile, ct).ConfigureAwait(false));
-                if (cached != null)
-                {
-                    return cached;
-                }
-            }
-            catch { /* regenerate */ }
+            throw new FileNotFoundException("还没有原文字幕，请先选择「LM 字幕」开始转写");
         }
 
-        var gate = _windowLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            // Another request may have filled the cache while we waited.
-            if (File.Exists(cacheFile))
-            {
-                var cached = System.Text.Json.JsonSerializer.Deserialize<List<SubtitleCue>>(
-                    await File.ReadAllTextAsync(cacheFile, ct).ConfigureAwait(false));
-                if (cached != null)
-                {
-                    return cached;
-                }
-            }
-
-            var (path, streamIdx, duration) = ResolveMedia(itemId, audioStreamIndex);
-            if (duration > 0)
-            {
-                windowSeconds = Math.Min(windowSeconds, duration - startSeconds);
-                if (windowSeconds <= 0.5)
-                {
-                    return new List<SubtitleCue>();
-                }
-            }
-
-            var tempFile = Path.Combine(Path.GetTempPath(), $"lmsubs-win-{Guid.NewGuid():N}.mp3");
-            try
-            {
-                await _extractor.ExtractAsync(path, streamIdx, startSeconds, windowSeconds, tempFile, config, ct).ConfigureAwait(false);
-                var segments = await _openAi.TranscribeAsync(tempFile, startSeconds, windowSeconds, config, ct).ConfigureAwait(false);
-                var cues = SubtitleText.Normalize(segments);
-
-                if (translate && cues.Count > 0)
-                {
-                    cues = await TranslateCuesAsync(cues, lang, null, ct).ConfigureAwait(false);
-                }
-
-                Directory.CreateDirectory(Path.GetDirectoryName(cacheFile)!);
-                await File.WriteAllTextAsync(cacheFile, System.Text.Json.JsonSerializer.Serialize(cues), ct).ConfigureAwait(false);
-                return cues;
-            }
-            finally
-            {
-                try { File.Delete(tempFile); } catch { /* best effort */ }
-            }
-        }
-        finally
-        {
-            gate.Release();
-        }
+        var context = new List<(string Src, string Dst)>();
+        var translated = await TranslateCuesWithContextAsync(cues, lang, context, Math.Clamp(config.ContextPairs, 0, 30), ct).ConfigureAwait(false);
+        _store.SaveCues(itemId, lang, translated);
+        _store.Render(itemId, null, translated: true, live: false, lang, translated);
+        _store.Render(itemId, null, translated: true, live: true, lang, translated);
+        return SubtitleText.ToSrt(translated);
     }
 }

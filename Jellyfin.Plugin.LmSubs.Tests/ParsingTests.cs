@@ -128,6 +128,35 @@ public class ParsingTests
     }
 
     [Fact]
+    public void MergeRange_AppendDedupes()
+    {
+        var existing = new List<SubtitleCue> { new(0, 2, "a"), new(2, 4, "b") };
+        var merged = SubtitleService.MergeRange(existing, new[] { new SubtitleCue(2, 4, "b"), new SubtitleCue(4, 6, "c") }, 4, 6, replace: false);
+        Assert.Equal(3, merged.Count);
+        Assert.Equal("c", merged[2].Text);
+    }
+
+    [Fact]
+    public void MergeRange_ReplaceOverwritesRange()
+    {
+        var existing = new List<SubtitleCue> { new(0, 2, "old-head"), new(10, 12, "old-mid"), new(12, 14, "old-mid2"), new(30, 32, "old-tail") };
+        var merged = SubtitleService.MergeRange(existing, new[] { new SubtitleCue(10, 13, "new-mid") }, 10, 20, replace: true);
+        Assert.Equal(3, merged.Count);
+        Assert.Equal("old-head", merged[0].Text);
+        Assert.Equal("new-mid", merged[1].Text);
+        Assert.Equal("old-tail", merged[2].Text);
+    }
+
+    [Fact]
+    public void MergeRange_ReplaceWithEmptyClearsRange()
+    {
+        var existing = new List<SubtitleCue> { new(0, 2, "head"), new(10, 12, "mid") };
+        var merged = SubtitleService.MergeRange(existing, Array.Empty<SubtitleCue>(), 10, 20, replace: true);
+        Assert.Single(merged);
+        Assert.Equal("head", merged[0].Text);
+    }
+
+    [Fact]
     public void Normalize_SplitsEnglishOnWords()
     {
         var text = string.Join(" ", Enumerable.Repeat("word", 40));

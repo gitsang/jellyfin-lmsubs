@@ -1,7 +1,7 @@
 ---
 name: "LMSubs"
 guid: "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b"
-version: "1.0.0.0"
+version: "1.1.0.0"
 targetAbi: "10.10.0.0"
 framework: "net8.0"
 owner: "gitsang"
@@ -9,12 +9,19 @@ overview: "OpenAI-compatible ASR + LLM subtitle generation and translation"
 description: >
   Generate subtitles from speech (ASR) and translate them with any
   OpenAI-compatible LLM. Configurable Base URL / API Key / Model for both
-  stages. Supports full-video generation and live on-demand transcription
-  windows in the web player (via web/lmsubs.js injection).
+  stages. Adds two native subtitle tracks to every video: "LM 字幕" fills
+  itself from the current playback position using cache when possible,
+  "LM 字幕（实时）" always re-transcribes and overwrites. No web modification.
 category: "Metadata"
 artifacts:
   - "Jellyfin.Plugin.LmSubs.dll"
 changelog: |
+  ## 1.1.0.0
+  - Native subtitle tracks "LM 字幕" / "LM 字幕（实时）" in every client's subtitle
+    selector — selecting a track starts ASR + translation at the current position.
+  - Position-first chunk pipeline with on-disk cache; completed videos never call
+    the API again. Live track always re-transcribes and overwrites.
+  - Removed the web-injection approach entirely.
   ## 1.0.0.0
   - Initial release: full-video ASR generation, LLM translation with rolling
     context, realtime window transcription, config page with connectivity test.
