@@ -110,6 +110,57 @@ export default function (view) {
         return false;
     });
 
+    function escapeHtml(s) {
+        return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function renderTasks(tasks) {
+        const box = $('#LmSubsTaskList');
+        if (!tasks.length) {
+            box.innerHTML = '<div class="fieldDescription">No tasks yet.</div>';
+            return;
+        }
+        box.innerHTML = tasks.map((t, i) => {
+            const running = t.status === 'queued' || t.status === 'running';
+            const pct = Math.round((t.progress || 0) * 100);
+            const lang = t.translate === false ? 'transcription only' : escapeHtml(t.targetLanguage);
+            const detail = running
+                ? escapeHtml(t.stage || t.status) + ' — ' + pct + '%'
+                : (t.status === 'done' ? 'done' : escapeHtml(t.status) + (t.error ? ': ' + escapeHtml(t.error) : ''));
+            const btn = running
+                ? '<button is="emby-button" type="button" class="raised emby-button lm-task-stop" data-i="' + i + '"><span>Stop</span></button>'
+                : '<button is="emby-button" type="button" class="raised emby-button lm-task-del" data-i="' + i + '"><span>Delete</span></button>';
+            return '<div class="listItem listItem-border" style="padding:.4em .6em;">' +
+                '<div class="listItemBody">' +
+                '<div>' + escapeHtml(t.itemName) + ' <span class="secondary">(' + lang + ')</span></div>' +
+                '<div class="secondary listItemBodyText">' + detail + '</div>' +
+                '</div>' + btn + '</div>';
+        }).join('');
+
+        box.querySelectorAll('.lm-task-stop').forEach((b) => b.addEventListener('click', () => {
+            const t = tasks[+b.dataset.i];
+            ApiClient.ajax({ type: 'POST', url: ApiClient.getUrl('LmSubs/Cancel/' + t.itemId) })
+                .then(loadTasks).catch((e) => Dashboard.alert('Stop failed: ' + e));
+        }));
+        box.querySelectorAll('.lm-task-del').forEach((b) => b.addEventListener('click', () => {
+            const t = tasks[+b.dataset.i];
+            const lang = t.translate === false ? 'source' : t.targetLanguage;
+            Dashboard.confirm('Delete the cached result for "' + t.itemName + '" (' + lang + ')? Downloaded subtitle files are kept.', 'Delete task', (ok) => {
+                if (!ok) return;
+                ApiClient.ajax({ type: 'DELETE', url: ApiClient.getUrl('LmSubs/Tasks/' + t.itemId, { lang: lang }) })
+                    .then(loadTasks).catch((e) => Dashboard.alert('Delete failed: ' + e));
+            });
+        }));
+    }
+
+    function loadTasks() {
+        return ApiClient.getJSON(ApiClient.getUrl('LmSubs/Tasks')).then(renderTasks)
+            .catch(() => { $('#LmSubsTaskList').innerHTML = '<div class="fieldDescription">Failed to load tasks.</div>'; });
+    }
+
+    $('#LmSubsTasksRefresh').addEventListener('click', loadTasks);
+    loadTasks();
+
     $('#LmSubsTestBtn').addEventListener('click', () => {
         const out = $('#LmSubsTestResult');
         out.textContent = 'Testing…';

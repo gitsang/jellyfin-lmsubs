@@ -81,4 +81,71 @@ public class SubtitleStore
         var srt = GetSrt(itemId, translated, lang);
         return srt == null ? null : SubtitleText.ToVtt(SubtitleText.ParseSrt(srt));
     }
+
+    public List<Guid> ListCachedItems()
+    {
+        var result = new List<Guid>();
+        foreach (var dir in Directory.EnumerateDirectories(_root))
+        {
+            if (Guid.TryParse(Path.GetFileName(dir), out var id))
+            {
+                result.Add(id);
+            }
+        }
+
+        return result;
+    }
+
+    // Languages with a rendered translated SRT on disk (slug form).
+    public List<string> ListCachedLanguages(Guid itemId)
+    {
+        var dir = Path.Combine(_root, itemId.ToString("N"));
+        if (!Directory.Exists(dir))
+        {
+            return new List<string>();
+        }
+
+        return Directory.EnumerateFiles(dir, "translated.*.srt")
+            .Select(f => Path.GetFileName(f)["translated.".Length..^".srt".Length])
+            .ToList();
+    }
+
+    public bool HasSourceCache(Guid itemId)
+    {
+        var dir = Path.Combine(_root, itemId.ToString("N"));
+        return File.Exists(Path.Combine(dir, "source.srt")) || File.Exists(Path.Combine(dir, "cues.source.json"));
+    }
+
+    // Delete the whole item cache, or one language's cues+srt (source included).
+    public void DeleteCache(Guid itemId, string? langSlug = null)
+    {
+        var dir = Path.Combine(_root, itemId.ToString("N"));
+        if (!Directory.Exists(dir))
+        {
+            return;
+        }
+
+        if (langSlug == null)
+        {
+            Directory.Delete(dir, true);
+            return;
+        }
+
+        foreach (var f in new[] { $"cues.{langSlug}.json", $"translated.{langSlug}.srt", $"source.srt" })
+        {
+            if (langSlug == "source" || !f.StartsWith("source.", StringComparison.Ordinal))
+            {
+                var p = Path.Combine(dir, f);
+                if (File.Exists(p))
+                {
+                    File.Delete(p);
+                }
+            }
+        }
+
+        if (!Directory.EnumerateFileSystemEntries(dir).Any())
+        {
+            Directory.Delete(dir);
+        }
+    }
 }

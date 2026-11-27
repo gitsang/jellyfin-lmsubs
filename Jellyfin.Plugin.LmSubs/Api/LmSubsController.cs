@@ -56,6 +56,76 @@ public class LmSubsController : ControllerBase
     [HttpPost("Cancel/{itemId:guid}")]
     public ActionResult Cancel([FromRoute] Guid itemId) => Ok(new { cancelled = _subtitles.Cancel(itemId) });
 
+    [HttpGet("Tasks")]
+    public ActionResult Tasks()
+    {
+        var tasks = new List<Dictionary<string, object?>>();
+        var seen = new HashSet<(Guid, string)>();
+
+        foreach (var job in _subtitles.AllJobs().OrderByDescending(j => j.StartedUtc))
+        {
+            var slug = job.Translate ? SubtitleStore.LangSlug(job.TargetLanguage) : "source";
+            seen.Add((job.ItemId, slug));
+            tasks.Add(JobDto(job));
+        }
+
+        // Cache-only entries (e.g. after a server restart) still show as completed tasks.
+        foreach (var itemId in _subtitles.Store.ListCachedItems())
+        {
+            foreach (var slug in _subtitles.Store.ListCachedLanguages(itemId))
+            {
+                if (seen.Add((itemId, slug)))
+                {
+                    tasks.Add(CachedDto(itemId, slug));
+                }
+            }
+
+            if (_subtitles.Store.HasSourceCache(itemId) && seen.Add((itemId, "source")))
+            {
+                tasks.Add(CachedDto(itemId, "source"));
+            }
+        }
+
+        return Ok(tasks);
+    }
+
+    // Delete cache (and stop the task if running). Downloaded subtitle files are untouched.
+    [HttpDelete("Tasks/{itemId:guid}")]
+    public ActionResult DeleteTask([FromRoute] Guid itemId, [FromQuery] string? lang = null)
+    {
+        var slug = lang == null ? null : SubtitleStore.LangSlug(lang);
+        if (slug == null)
+        {
+            _subtitles.Cancel(itemId);
+        }
+        else
+        {
+            var job = _subtitles.AllJobs().FirstOrDefault(j =>
+                j.ItemId == itemId && (j.Translate ? SubtitleStore.LangSlug(j.TargetLanguage) : "source") == slug);
+            job?.Cts.Cancel();
+        }
+
+        _subtitles.Forget(itemId, slug);
+        _subtitles.Store.DeleteCache(itemId, slug);
+        return Ok(new { deleted = true });
+    }
+
+    private Dictionary<string, object?> CachedDto(Guid itemId, string slug) => new()
+    {
+        ["itemId"] = itemId,
+        ["itemName"] = _subtitles.ItemName(itemId) ?? itemId.ToString("N"),
+        ["status"] = "done",
+        ["stage"] = "Cached",
+        ["progress"] = 1.0,
+        ["asrProgress"] = 1.0,
+        ["translateProgress"] = 1.0,
+        ["error"] = null,
+        ["targetLanguage"] = slug == "source" ? "source" : slug,
+        ["translate"] = slug != "source",
+        ["startedUtc"] = null,
+        ["finishedUtc"] = null
+    };
+
     public record TranslateRequest([Required] Guid ItemId, string? TargetLanguage = null);
 
     [HttpPost("Translate")]
@@ -118,7 +188,8 @@ public class LmSubsController : ControllerBase
         ["asrProgress"] = Math.Round(job.AsrProgress, 3),
         ["translateProgress"] = Math.Round(job.TranslateProgress, 3),
         ["error"] = job.Error,
-        ["targetLanguage"] = job.TargetLanguage,
+        ["targetLanguage"] = job.Translate ? job.TargetLanguage : "source",
+        ["translate"] = job.Translate,
         ["startedUtc"] = job.StartedUtc,
         ["finishedUtc"] = job.FinishedUtc
     };

@@ -239,6 +239,25 @@ public class SubtitleService
         return "und";
     }
 
+    public IReadOnlyList<GenerationJob> AllJobs() => _jobs.Values.ToList();
+
+    public string? ItemName(Guid itemId) => _libraryManager.GetItemById(itemId)?.Name;
+
+    // Forget in-memory jobs/sessions for an item (after cancel) so the task list
+    // and future searches don't resurrect deleted entries.
+    public void Forget(Guid itemId, string? langSlug = null)
+    {
+        foreach (var key in _jobs.Keys.Where(k => k.ItemId == itemId && (langSlug == null || k.Lang == langSlug)).ToList())
+        {
+            _jobs.TryRemove(key, out _);
+        }
+
+        if (langSlug == null && _sessions.TryRemove(itemId, out var session))
+        {
+            session.Cts.Cancel();
+        }
+    }
+
     public GenerationJob? GetJob(Guid itemId, string? targetLanguage = null)
     {
         if (targetLanguage != null)

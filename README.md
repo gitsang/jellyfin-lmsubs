@@ -82,7 +82,9 @@ https://raw.githubusercontent.com/gitsang/jellyfin-lmsubs/main/manifest.json
 
 Plugins → Catalog → **LMSubs** → Install → restart Jellyfin.
 
-Dashboard → Plugins → **LMSubs**: configure API Key, Model, etc.
+Dashboard → Plugins → **LMSubs**: configure API Key, Model, etc. The settings page also
+has a **Tasks** list (running + completed): stop a running task, or delete a completed one
+(removes the plugin cache only; subtitles already downloaded to your media stay).
 
 ### 4.2 Use
 
@@ -105,6 +107,8 @@ All endpoints live under `/LmSubs` (auth via `X-Emby-Token`, except subtitle dow
 | POST   | `/LmSubs/Generate`                                                   | `{itemId, translate?, targetLanguage?, restart?}` start full generation |
 | GET    | `/LmSubs/Status/{itemId}`                                            | status/progress (`queued/running/done/error/cancelled`)            |
 | POST   | `/LmSubs/Cancel/{itemId}`                                            | cancel                                                             |
+| GET    | `/LmSubs/Tasks`                                                      | all tasks: running + completed (incl. cache-only after restart)    |
+| DELETE | `/LmSubs/Tasks/{itemId}?lang=`                                       | stop task + delete cache (all langs if omitted); downloaded files kept |
 | POST   | `/LmSubs/Translate`                                                  | `{itemId, targetLanguage?}` translate the cached source only       |
 | GET    | `/LmSubs/Subtitles/{itemId}?mode=translated\|source&format=vtt\|srt` | download subtitles (anonymous)                                     |
 | POST   | `/LmSubs/Test`                                                       | connectivity test for both endpoints                               |

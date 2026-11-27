@@ -75,7 +75,9 @@ https://raw.githubusercontent.com/gitsang/jellyfin-lmsubs/main/manifest.json
 
 插件 → 目录 → **LMSubs** → 安装 → 重启 Jellyfin。
 
-控制台 → 插件 → **LMSubs**：配置 API Key，Model 等。
+控制台 → 插件 → **LMSubs**：配置 API Key，Model 等。设置页还有 **Tasks** 任务列表
+（运行中 + 已完成）：可停止运行中的任务，或删除已完成任务（仅删插件缓存，
+已下载到媒体目录的字幕不受影响）。
 
 ### 4.2 使用
 
@@ -96,6 +98,8 @@ ASR/翻译模型和目标语言；**生成过程中再次搜索，可以看到�
 | POST | `/LmSubs/Generate`                                            | `{itemId, translate?, targetLanguage?, restart?}` 启动全量生成 |
 | GET  | `/LmSubs/Status/{itemId}`                                     | 状态/进度（`queued/running/done/error/cancelled`）            |
 | POST | `/LmSubs/Cancel/{itemId}`                                     | 取消                                                          |
+| GET | `/LmSubs/Tasks`                                               | 全部任务：运行中 + 已完成（含重启后仅剩缓存的条目）        |
+| DELETE | `/LmSubs/Tasks/{itemId}?lang=`                                | 停止任务并删缓存（省略 lang 删全部语言）；已下载字幕保留 |
 | POST | `/LmSubs/Translate`                                           | `{itemId, targetLanguage?}` 仅翻译已缓存的原文                |
 | GET  | `/LmSubs/Subtitles/{itemId}?mode=translated\|source&format=vtt\|srt` | 下载字幕（匿名）                                       |
 | POST | `/LmSubs/Test`                                                | 两个端点的连通性测试                                          |
