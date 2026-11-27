@@ -53,7 +53,9 @@ public class LmSubtitleProvider : ISubtitleProvider
 
     private RemoteSubtitleInfo BuildInfo(Guid itemId, string mode, string langCode, string name, string comment, bool aiTranslated)
     {
-        var job = _service.AllJobs().FirstOrDefault(j => j.ItemId == itemId && j.Mode == mode &&
+        // translated and bilingual share one job (Mode=bilingual) and one bi- cache.
+        var jobMode = mode == "source" ? "source" : "bilingual";
+        var job = _service.AllJobs().FirstOrDefault(j => j.ItemId == itemId && j.Mode == jobMode &&
             (mode == "source" || SubtitleService.ThreeLetterLanguage(j.TargetLanguage) == langCode));
         var session = _service.GetSession(itemId);
 
@@ -70,7 +72,10 @@ public class LmSubtitleProvider : ISubtitleProvider
         {
             comment = comment.Replace("ASR: ", $"ASR ({session.Progress * 100:0}%): ", StringComparison.Ordinal);
         }
-        else if (job is { Status: "done" } || _service.Store.GetSrtKeyed(itemId, ModeCacheKey(mode, langCode)) != null)
+        else if (job is { Status: "done" } ||
+                 (mode == "source"
+                     ? _service.Store.GetSrtKeyed(itemId, "source")
+                     : _service.Store.GetAnyTranslationSrt(itemId, langCode)) != null)
         {
             comment += "\nReady (cached)";
         }
@@ -101,21 +106,17 @@ public class LmSubtitleProvider : ISubtitleProvider
         }
 
         // Cache hit: return immediately without starting or waiting on any job.
-        var cacheKey = mode switch
-        {
-            "source" => "source",
-            "bilingual" => "bi-" + SubtitleStore.LangSlug(SubtitleService.NormalizeTargetLanguage(lang)),
-            _ => SubtitleStore.LangSlug(SubtitleService.NormalizeTargetLanguage(lang))
-        };
-        var cached = _service.Store.GetSrtKeyed(itemId, cacheKey);
+        // Translated and bilingual share the paired bi- cache; translated strips the source line.
+        var langSlug = SubtitleStore.LangSlug(SubtitleService.NormalizeTargetLanguage(lang));
+        var cached = mode == "source"
+            ? _service.Store.GetSrtKeyed(itemId, "source")
+            : _service.Store.GetAnyTranslationSrt(itemId, langSlug);
         if (cached != null)
         {
-            return new SubtitleResponse
-            {
-                Format = "srt",
-                Language = mode == "source" ? _service.SourceLanguageCode(itemId) : lang,
-                Stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(cached))
-            };
+            // Legacy translated.<lang>.srt is already single-mode; only strip pairs
+            // when the content came from the bi- cache. Detect by first cue shape.
+            var fromPairs = _service.Store.GetSrtKeyed(itemId, "bi-" + langSlug) != null;
+            return Respond(cached, itemId, lang, mode == "translated" && fromPairs ? "translated" : mode == "translated" ? "translated-raw" : mode);
         }
 
         // Ids carry ISO codes; job keys use the prompt-friendly language name.
@@ -145,14 +146,30 @@ public class LmSubtitleProvider : ISubtitleProvider
             throw new InvalidOperationException("Generation finished but no subtitle file was produced");
         }
 
+        return Respond(srt, itemId, lang, mode);
+    }
+
+    private SubtitleResponse Respond(string srt, Guid itemId, string lang, string mode)
+    {
+        if (mode == "translated")
+        {
+            srt = SubtitleText.ToSrt(SubtitleText.ParseSrt(srt).Select(TranslationOnly));
+        }
+        // "translated-raw": legacy single-mode cache, serve as-is.
+
         return new SubtitleResponse
         {
             Format = "srt",
-            Language = mode == "source"
-                ? _service.SourceLanguageCode(itemId)
-                : SubtitleService.ThreeLetterLanguage(job.TargetLanguage),
+            Language = mode == "source" ? _service.SourceLanguageCode(itemId) : lang,
             Stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(srt))
         };
+    }
+
+    // Paired cues are "src\ndst"; keep only the translation line(s).
+    internal static SubtitleCue TranslationOnly(SubtitleCue cue)
+    {
+        var idx = cue.Text.IndexOf('\n');
+        return idx >= 0 ? cue with { Text = cue.Text[(idx + 1)..] } : cue;
     }
 
     internal static string ModeCacheKey(string mode, string langSlug) => mode switch

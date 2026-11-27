@@ -107,6 +107,16 @@ public class LmSubsController : ControllerBase
 
         _subtitles.Forget(itemId, slug);
         _subtitles.Store.DeleteCache(itemId, slug);
+
+        // Translated/bilingual share the bi- cache: deleting either removes both
+        // representations (and any legacy single-mode render).
+        if (slug != null && slug != "source")
+        {
+            var counterpart = slug.StartsWith("bi-", StringComparison.Ordinal) ? slug[3..] : "bi-" + slug;
+            _subtitles.Forget(itemId, counterpart);
+            _subtitles.Store.DeleteCache(itemId, counterpart);
+        }
+
         return Ok(new { deleted = true });
     }
 
@@ -152,17 +162,19 @@ public class LmSubsController : ControllerBase
         [FromQuery] string format = "vtt")
     {
         var targetLang = SubtitleService.NormalizeTargetLanguage(lang);
-        var cacheKey = mode.ToLowerInvariant() switch
-        {
-            "source" => "source",
-            "bilingual" => "bi-" + SubtitleStore.LangSlug(targetLang),
-            _ => SubtitleStore.LangSlug(targetLang)
-        };
-
-        var srt = _subtitles.Store.GetSrtKeyed(itemId, cacheKey);
+        var m = mode.ToLowerInvariant();
+        var srt = m == "source"
+            ? _subtitles.Store.GetSrtKeyed(itemId, "source")
+            : _subtitles.Store.GetAnyTranslationSrt(itemId, SubtitleStore.LangSlug(targetLang));
         if (srt == null)
         {
             return NotFound();
+        }
+
+        // Paired bi- cues serve translated requests as translation-only.
+        if (m == "translated" && _subtitles.Store.GetSrtKeyed(itemId, "bi-" + SubtitleStore.LangSlug(targetLang)) != null)
+        {
+            srt = SubtitleText.ToSrt(SubtitleText.ParseSrt(srt).Select(Providers.LmSubtitleProvider.TranslationOnly));
         }
 
         return string.Equals(format, "srt", StringComparison.OrdinalIgnoreCase)

@@ -65,8 +65,9 @@ public class AsrSession
     }
 }
 
-// Per (item, mode) job riding on the shared ASR session.
-// Mode: source | translated | bilingual (translation jobs share nothing but the transcript).
+// Per (item, language) job riding on the shared ASR session.
+// Mode: source | bilingual. One translation job per language produces paired
+// (src\ndst) cues; "translated" downloads are rendered views of the same data.
 public class GenerationJob
 {
     public Guid ItemId { get; init; }
@@ -91,17 +92,13 @@ public class GenerationJob
 
     public string TargetLanguage { get; set; } = string.Empty;
 
-    public string Mode { get; set; } = "translated";
+    public string Mode { get; set; } = "bilingual";
 
     public bool Translate => Mode != "source";
 
-    // Cache key: source, <langslug>, or bi-<langslug>.
-    public string CacheKey => Mode switch
-    {
-        "source" => "source",
-        "bilingual" => "bi-" + SubtitleStore.LangSlug(TargetLanguage),
-        _ => SubtitleStore.LangSlug(TargetLanguage)
-    };
+    // Cache key: source or bi-<langslug> (paired src\ndst cues; translated SRTs
+    // are rendered from these on demand).
+    public string CacheKey => Mode == "source" ? "source" : "bi-" + SubtitleStore.LangSlug(TargetLanguage);
 
     public CancellationTokenSource Cts { get; } = new();
 
@@ -341,12 +338,9 @@ public class SubtitleService
     public GenerationJob EnsureRunning(Guid itemId, out bool created, string mode, string? targetLanguage = null, bool restart = false)
     {
         var lang = NormalizeTargetLanguage(targetLanguage);
-        var key = (itemId, mode switch
-        {
-            "source" => "source",
-            "bilingual" => "bi-" + SubtitleStore.LangSlug(lang),
-            _ => SubtitleStore.LangSlug(lang)
-        });
+        // translated and bilingual share one job: same translation, different render.
+        var jobMode = mode == "source" ? "source" : "bilingual";
+        var key = (itemId, jobMode == "source" ? "source" : "bi-" + SubtitleStore.LangSlug(lang));
 
         var controlLock = _controlLocks.GetOrAdd(itemId, _ => new SemaphoreSlim(1, 1));
         controlLock.Wait();
@@ -356,13 +350,16 @@ public class SubtitleService
 
             // A complete cached result means no work: return a finished stub without
             // touching the ASR session (restart=true forces a real rerun).
-            if (!restart && _store.GetSrtKeyed(itemId, key.Item2) != null)
+            var cachedSrt = jobMode == "source"
+                ? _store.GetSrtKeyed(itemId, "source")
+                : _store.GetAnyTranslationSrt(itemId, SubtitleStore.LangSlug(lang));
+            if (!restart && cachedSrt != null)
             {
                 var cachedJob = new GenerationJob
                 {
                     ItemId = itemId,
                     TargetLanguage = lang,
-                    Mode = mode,
+                    Mode = jobMode,
                     ItemName = ItemName(itemId) ?? itemId.ToString(),
                     Status = "done",
                     Progress = 1,
@@ -397,7 +394,7 @@ public class SubtitleService
             {
                 ItemId = itemId,
                 TargetLanguage = lang,
-                Mode = mode,
+                Mode = jobMode,
                 ItemName = session.ItemName
             };
 
@@ -608,7 +605,7 @@ public class SubtitleService
                         {
                             job.AsrProgress = session.Progress;
                             job.TranslateProgress = Math.Min(1, baseP + Math.Max(0, span) * fraction);
-                        }, bilingual: job.Mode == "bilingual").ConfigureAwait(false);
+                        }, bilingual: true).ConfigureAwait(false);
                     finalCues.AddRange(done);
                     translatedCount = snapshot.Count;
                     _store.SaveCues(job.ItemId, job.CacheKey, finalCues);

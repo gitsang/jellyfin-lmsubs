@@ -96,8 +96,9 @@ three entries appear; download the one you want:
 - **LM Subtitles — <language>**: translation only
 - **LM Subtitles — Bilingual (… + …)**: source + translation, two lines
 
-All three share one ASR pass; translation runs only when you download a translated or
-bilingual entry. The language you pick in the search dialog **is the translation target**.
+All three share one ASR pass, and translated/bilingual share **one translation job** per
+language — the translation runs once and the two entries are just different renders of it.
+The language you pick in the search dialog **is the translation target**.
 Descriptions show models/target and **live progress percentages on re-search**.
 
 When generation finishes (a few minutes), the subtitle appears in the item's subtitle list,

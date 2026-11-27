@@ -335,4 +335,15 @@ public class ParsingTests
         Assert.Equal(0, cues[0].Start, 1);
         Assert.Equal(30, cues[0].End, 1);
     }
+
+    [Fact]
+    public void TranslationOnly_StripsSourceLine()
+    {
+        var paired = new SubtitleCue(0, 2, "Hello there.\n你好。");
+        Assert.Equal("你好。", LmSubtitleProvider.TranslationOnly(paired).Text);
+        var single = new SubtitleCue(0, 2, "已是纯译文");
+        Assert.Equal("已是纯译文", LmSubtitleProvider.TranslationOnly(single).Text);
+        var multiline = new SubtitleCue(0, 2, "src line\ndst line 1\ndst line 2");
+        Assert.Equal("dst line 1\ndst line 2", LmSubtitleProvider.TranslationOnly(multiline).Text);
+    }
 }

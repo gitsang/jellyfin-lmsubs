@@ -78,6 +78,13 @@ public class SubtitleStore
         return File.Exists(file) ? File.ReadAllText(file) : null;
     }
 
+    // Any complete translation result: paired bi- cache (current) or legacy
+    // translated.<lang>.srt (pre-1.4.1 single-mode renders).
+    public string? GetAnyTranslationSrt(Guid itemId, string langSlug)
+    {
+        return GetSrtKeyed(itemId, "bi-" + langSlug) ?? GetSrtKeyed(itemId, langSlug);
+    }
+
     public void Render(Guid itemId, bool translated, string lang, IEnumerable<SubtitleCue> cues)
     {
         File.WriteAllText(CacheSrtPath(itemId, translated, lang), SubtitleText.ToSrt(cues));

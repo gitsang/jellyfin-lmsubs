@@ -8,6 +8,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "1.4.1.0",
+        "changelog": "Translated and bilingual share one translation job per language (translate once, two renders). No double LLM cost; deleting either cache removes both. Legacy caches still served.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.4.1.0/lmsubs_1.4.1.0.zip",
+        "checksum": "1cd15b0ff630d2654ab5e7c10dbab741",
+        "timestamp": "2026-11-27T03:50:28Z"
+      },
+      {
         "version": "1.4.0.1",
         "changelog": "Cache hit on download returns immediately without restarting the ASR session or waiting.",
         "targetAbi": "10.11.0.0",
