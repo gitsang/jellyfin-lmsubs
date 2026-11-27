@@ -7,8 +7,9 @@ English | [简体中文](README.zh_cn.md)
 Jellyfin plugin for **ASR speech-to-text + LLM subtitle translation** (OpenAI-compatible APIs).
 
 Works exactly like OpenSubtitles: **content first → track appears → user selects last**.
-Search and download the "LM Subtitles" entry in the item's **Edit Subtitles** dialog; the
-server transcribes and translates the whole video, then the finished subtitle is saved and
+Search in the item's **Edit Subtitles** dialog and download one of three entries —
+Source / Translated / Bilingual; the server transcribes (once, shared) and translates
+only what you asked for, then the finished subtitle is saved and
 shows up in every client's subtitle list. Completed results are cached forever — downloading
 again never re-calls the API.
 
@@ -18,7 +19,7 @@ again never re-calls the API.
 Item details → ⋮ menu → Edit Subtitles
         │  search: POST Items/{id}/RemoteSearch/Subtitles/{lang}
         ▼
-LmSubtitleProvider.Search() ──returns one "LM Subtitles" candidate──► dialog list
+LmSubtitleProvider.Search() ──returns source/translated/bilingual candidates──► dialog list
         │
         │  download: POST Items/{id}/RemoteSearch/Subtitles/{subtitleId}
         ▼
@@ -89,11 +90,15 @@ has a **Tasks** list (running + completed): stop a running task, or delete a com
 ### 4.2 Use
 
 Item details → ⋮ menu → **Edit Subtitles** → pick a language → Search →
-click the download button next to the "LM Subtitles" entry.
+three entries appear; download the one you want:
 
-The language you pick in the search dialog **is the translation target** — there is no
-target-language setting. The entry's description shows the ASR/translation models and the
-target language; **search again while generating to see live progress percentages**.
+- **LM Subtitles — Source (…)**: transcription only, no translation cost
+- **LM Subtitles — <language>**: translation only
+- **LM Subtitles — Bilingual (… + …)**: source + translation, two lines
+
+All three share one ASR pass; translation runs only when you download a translated or
+bilingual entry. The language you pick in the search dialog **is the translation target**.
+Descriptions show models/target and **live progress percentages on re-search**.
 
 When generation finishes (a few minutes), the subtitle appears in the item's subtitle list,
 selectable from any client.
@@ -104,7 +109,7 @@ All endpoints live under `/LmSubs` (auth via `X-Emby-Token`, except subtitle dow
 
 | Method | Path                                                                 | Description                                                        |
 | ------ | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| POST   | `/LmSubs/Generate`                                                   | `{itemId, translate?, targetLanguage?, restart?}` start full generation |
+| POST   | `/LmSubs/Generate`                                                   | `{itemId, mode? (source\|translated\|bilingual), targetLanguage?, restart?}` |
 | GET    | `/LmSubs/Status/{itemId}`                                            | status/progress (`queued/running/done/error/cancelled`)            |
 | POST   | `/LmSubs/Cancel/{itemId}`                                            | cancel                                                             |
 | GET    | `/LmSubs/Tasks`                                                      | all tasks: running + completed (incl. cache-only after restart)    |

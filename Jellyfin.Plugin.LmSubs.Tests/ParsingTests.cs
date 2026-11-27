@@ -152,15 +152,19 @@ public class ParsingTests
     public void SubtitleId_RoundTrips()
     {
         var id = Guid.NewGuid();
-        var built = LmSubtitleProvider.BuildId(id, "chi", true);
-        var (parsed, lang, translate) = LmSubtitleProvider.ParseId(built);
+        var built = LmSubtitleProvider.BuildId(id, "chi", "translated");
+        var (parsed, lang, mode) = LmSubtitleProvider.ParseId(built);
         Assert.Equal(id, parsed);
         Assert.Equal("chi", lang);
-        Assert.True(translate);
+        Assert.Equal("translated", mode);
 
-        var (_, lang2, translate2) = LmSubtitleProvider.ParseId(LmSubtitleProvider.BuildId(id, "eng", false));
+        var (_, lang2, mode2) = LmSubtitleProvider.ParseId(LmSubtitleProvider.BuildId(id, "eng", "source"));
         Assert.Equal("eng", lang2);
-        Assert.False(translate2);
+        Assert.Equal("source", mode2);
+
+        var (_, _, mode3) = LmSubtitleProvider.ParseId(LmSubtitleProvider.BuildId(id, "chi", "bilingual"));
+        Assert.Equal("bilingual", mode3);
+        Assert.Equal("bi-chinese-simplified", LmSubtitleProvider.ModeCacheKey("bilingual", "chinese-simplified"));
 
         // Legacy bare-guid id still parses.
         var (parsed3, _, _) = LmSubtitleProvider.ParseId(id.ToString("N"));

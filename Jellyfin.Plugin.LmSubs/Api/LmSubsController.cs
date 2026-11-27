@@ -22,7 +22,7 @@ public class LmSubsController : ControllerBase
 
     public record GenerateRequest(
         [Required] Guid ItemId,
-        bool Translate = true,
+        string Mode = "translated",
         string? TargetLanguage = null,
         bool Restart = false);
 
@@ -31,7 +31,8 @@ public class LmSubsController : ControllerBase
     {
         try
         {
-            var job = _subtitles.EnsureRunning(request.ItemId, request.Translate, request.TargetLanguage, request.Restart);
+            var mode = request.Mode is "source" or "bilingual" ? request.Mode : "translated";
+            var job = _subtitles.EnsureRunning(request.ItemId, mode, request.TargetLanguage, request.Restart);
             return Ok(JobDto(job));
         }
         catch (Exception ex)
@@ -64,8 +65,7 @@ public class LmSubsController : ControllerBase
 
         foreach (var job in _subtitles.AllJobs().OrderByDescending(j => j.StartedUtc))
         {
-            var slug = job.Translate ? SubtitleStore.LangSlug(job.TargetLanguage) : "source";
-            seen.Add((job.ItemId, slug));
+            seen.Add((job.ItemId, job.CacheKey));
             tasks.Add(JobDto(job));
         }
 
@@ -93,15 +93,15 @@ public class LmSubsController : ControllerBase
     [HttpDelete("Tasks/{itemId:guid}")]
     public ActionResult DeleteTask([FromRoute] Guid itemId, [FromQuery] string? lang = null)
     {
-        var slug = lang == null ? null : SubtitleStore.LangSlug(lang);
+        // lang is a cache key: source | <langslug> | bi-<langslug>.
+        var slug = lang == null ? null : (lang == "source" || lang.StartsWith("bi-", StringComparison.Ordinal) ? lang : SubtitleStore.LangSlug(lang));
         if (slug == null)
         {
             _subtitles.Cancel(itemId);
         }
         else
         {
-            var job = _subtitles.AllJobs().FirstOrDefault(j =>
-                j.ItemId == itemId && (j.Translate ? SubtitleStore.LangSlug(j.TargetLanguage) : "source") == slug);
+            var job = _subtitles.AllJobs().FirstOrDefault(j => j.ItemId == itemId && j.CacheKey == slug);
             job?.Cts.Cancel();
         }
 
@@ -120,8 +120,9 @@ public class LmSubsController : ControllerBase
         ["asrProgress"] = 1.0,
         ["translateProgress"] = 1.0,
         ["error"] = null,
-        ["targetLanguage"] = slug == "source" ? "source" : slug,
-        ["translate"] = slug != "source",
+        ["targetLanguage"] = slug == "source" ? "source" : slug.StartsWith("bi-", StringComparison.Ordinal) ? slug[3..] : slug,
+        ["mode"] = slug == "source" ? "source" : slug.StartsWith("bi-", StringComparison.Ordinal) ? "bilingual" : "translated",
+        ["cacheKey"] = slug,
         ["startedUtc"] = null,
         ["finishedUtc"] = null
     };
@@ -151,16 +152,22 @@ public class LmSubsController : ControllerBase
         [FromQuery] string format = "vtt")
     {
         var targetLang = SubtitleService.NormalizeTargetLanguage(lang);
-        var translated = !string.Equals(mode, "source", StringComparison.OrdinalIgnoreCase);
-
-        if (string.Equals(format, "srt", StringComparison.OrdinalIgnoreCase))
+        var cacheKey = mode.ToLowerInvariant() switch
         {
-            var srt = _subtitles.Store.GetSrt(itemId, translated, targetLang);
-            return srt == null ? NotFound() : Content(srt, "application/x-subrip; charset=utf-8");
+            "source" => "source",
+            "bilingual" => "bi-" + SubtitleStore.LangSlug(targetLang),
+            _ => SubtitleStore.LangSlug(targetLang)
+        };
+
+        var srt = _subtitles.Store.GetSrtKeyed(itemId, cacheKey);
+        if (srt == null)
+        {
+            return NotFound();
         }
 
-        var vtt = _subtitles.Store.GetVtt(itemId, translated, targetLang);
-        return vtt == null ? NotFound() : Content(vtt, "text/vtt; charset=utf-8");
+        return string.Equals(format, "srt", StringComparison.OrdinalIgnoreCase)
+            ? Content(srt, "application/x-subrip; charset=utf-8")
+            : Content(SubtitleText.ToVtt(SubtitleText.ParseSrt(srt)), "text/vtt; charset=utf-8");
     }
 
     [HttpPost("Test")]
@@ -189,7 +196,8 @@ public class LmSubsController : ControllerBase
         ["translateProgress"] = Math.Round(job.TranslateProgress, 3),
         ["error"] = job.Error,
         ["targetLanguage"] = job.Translate ? job.TargetLanguage : "source",
-        ["translate"] = job.Translate,
+        ["mode"] = job.Mode,
+        ["cacheKey"] = job.CacheKey,
         ["startedUtc"] = job.StartedUtc,
         ["finishedUtc"] = job.FinishedUtc
     };

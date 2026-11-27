@@ -5,9 +5,9 @@ using MediaBrowser.Model.Providers;
 
 namespace Jellyfin.Plugin.LmSubs.Providers;
 
-// OpenSubtitles-style flow: Search lists one candidate per video; downloading it
-// runs the full ASR + translation pipeline and returns the complete SRT, which
-// Jellyfin's SubtitleManager saves and registers like any downloaded subtitle.
+// OpenSubtitles-style flow: Search lists three candidates (source / translated /
+// bilingual) sharing one ASR pass; downloading one runs its pipeline and returns
+// the complete SRT, which Jellyfin's SubtitleManager saves and registers.
 public class LmSubtitleProvider : ISubtitleProvider
 {
     private readonly SubtitleService _service;
@@ -25,7 +25,7 @@ public class LmSubtitleProvider : ISubtitleProvider
     public Task<IEnumerable<RemoteSubtitleInfo>> Search(SubtitleSearchRequest request, CancellationToken cancellationToken)
     {
         // SubtitleSearchRequest carries no item id; resolve it from MediaPath and
-        // encode it into the download id together with the searched target language.
+        // encode it into the download id together with language and mode.
         var itemId = ResolveItemId(request);
         if (itemId == Guid.Empty)
         {
@@ -33,25 +33,44 @@ public class LmSubtitleProvider : ISubtitleProvider
         }
 
         var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
-        var translate = config.AutoTranslate;
         var target = SubtitleService.NormalizeTargetLanguage(request.Language);
-        var threeLetter = SubtitleService.ThreeLetterLanguage(target);
+        var targetCode = SubtitleService.ThreeLetterLanguage(target);
+        var sourceName = _service.SourceLanguageName(itemId);
+        var sourceCode = _service.SourceLanguageCode(itemId);
 
-        var comment = $"ASR: {config.AsrModel}";
-        if (translate)
+        var infos = new List<RemoteSubtitleInfo>
         {
-            comment += $"\nTranslate: {config.TranslateModel}\nTarget: {target}";
-        }
+            BuildInfo(itemId, "source", sourceCode, $"LM Subtitles — Source ({sourceName})",
+                $"ASR: {config.AsrModel}", aiTranslated: false),
+            BuildInfo(itemId, "translated", targetCode, $"LM Subtitles — {target}",
+                $"ASR: {config.AsrModel}\nTranslate: {config.TranslateModel}\nTarget: {target}", aiTranslated: true),
+            BuildInfo(itemId, "bilingual", targetCode, $"LM Subtitles — Bilingual ({sourceName} + {target})",
+                $"ASR: {config.AsrModel}\nTranslate: {config.TranslateModel}\nTarget: {target}", aiTranslated: true)
+        };
 
-        var job = _service.GetJob(itemId, translate ? target : "source");
+        return Task.FromResult<IEnumerable<RemoteSubtitleInfo>>(infos);
+    }
+
+    private RemoteSubtitleInfo BuildInfo(Guid itemId, string mode, string langCode, string name, string comment, bool aiTranslated)
+    {
+        var job = _service.AllJobs().FirstOrDefault(j => j.ItemId == itemId && j.Mode == mode &&
+            (mode == "source" || SubtitleService.ThreeLetterLanguage(j.TargetLanguage) == langCode));
+        var session = _service.GetSession(itemId);
+
         if (job is { Status: "queued" or "running" })
         {
-            comment = $"ASR: {config.AsrModel} ({job.AsrProgress * 100:0}%)" +
-                      (job.Translate
-                          ? $"\nTranslate: {config.TranslateModel} ({job.TranslateProgress * 100:0}%)\nTarget: {job.TargetLanguage}"
-                          : string.Empty);
+            var asrPct = job.AsrProgress * 100;
+            comment = comment.Replace($"ASR: ", $"ASR ({asrPct:0}%): ", StringComparison.Ordinal);
+            if (job.Translate)
+            {
+                comment = comment.Replace("Translate: ", $"Translate ({job.TranslateProgress * 100:0}%): ", StringComparison.Ordinal);
+            }
         }
-        else if (job is { Status: "done" })
+        else if (session is { Status: "queued" or "running" } && mode == "source")
+        {
+            comment = comment.Replace("ASR: ", $"ASR ({session.Progress * 100:0}%): ", StringComparison.Ordinal);
+        }
+        else if (job is { Status: "done" } || _service.Store.GetSrtKeyed(itemId, ModeCacheKey(mode, langCode)) != null)
         {
             comment += "\nReady (cached)";
         }
@@ -60,30 +79,30 @@ public class LmSubtitleProvider : ISubtitleProvider
             comment += $"\nLast attempt failed: {job.Error}";
         }
 
-        var info = new RemoteSubtitleInfo
+        return new RemoteSubtitleInfo
         {
-            Id = BuildId(itemId, threeLetter, translate),
+            Id = BuildId(itemId, langCode, mode),
             ProviderName = Name,
-            Name = "LM Subtitles",
+            Name = name,
             Format = "srt",
-            ThreeLetterISOLanguageName = threeLetter,
+            ThreeLetterISOLanguageName = langCode,
             Author = "LMSubs",
             Comment = comment,
-            AiTranslated = translate
+            AiTranslated = aiTranslated
         };
-
-        return Task.FromResult<IEnumerable<RemoteSubtitleInfo>>(new[] { info });
     }
 
     public async Task<SubtitleResponse> GetSubtitles(string id, CancellationToken cancellationToken)
     {
-        var (itemId, lang, translate) = ParseId(id);
+        var (itemId, lang, mode) = ParseId(id);
         if (itemId == Guid.Empty)
         {
             throw new FileNotFoundException("Unknown LMSubs subtitle id: " + id);
         }
 
-        var job = _service.EnsureRunning(itemId, out var created, translate, lang);
+        // Ids carry ISO codes; job keys use the prompt-friendly language name.
+        var job = _service.EnsureRunning(itemId, out var created, mode,
+            mode == "source" ? null : SubtitleService.NormalizeTargetLanguage(lang));
 
         // Debounce: an in-flight download already waits on this job and will save the
         // subtitle when it completes. A second waiter would save a duplicate track.
@@ -97,7 +116,7 @@ public class LmSubtitleProvider : ISubtitleProvider
         await job.Completion.Task.ConfigureAwait(false);
 
         // A failed/cancelled job may still have a complete cached result from an earlier run.
-        var srt = _service.Store.GetSrt(itemId, job.Translate, job.TargetLanguage);
+        var srt = _service.Store.GetSrtKeyed(itemId, job.CacheKey);
         if (srt == null)
         {
             if (job.Status != "done")
@@ -111,27 +130,38 @@ public class LmSubtitleProvider : ISubtitleProvider
         return new SubtitleResponse
         {
             Format = "srt",
-            Language = SubtitleService.ThreeLetterLanguage(job.TargetLanguage),
+            Language = mode == "source"
+                ? _service.SourceLanguageCode(itemId)
+                : SubtitleService.ThreeLetterLanguage(job.TargetLanguage),
             Stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(srt))
         };
     }
 
-    // Download id: <itemId N>:<three-letter lang>:<t|s>. SubtitleManager splits the
-    // id on '_' only, so ':' survives its provider-prefix handling.
-    internal static string BuildId(Guid itemId, string lang, bool translate) =>
-        $"{itemId:N}:{lang}:{(translate ? "t" : "s")}";
+    internal static string ModeCacheKey(string mode, string langSlug) => mode switch
+    {
+        "source" => "source",
+        "bilingual" => "bi-" + langSlug,
+        _ => langSlug
+    };
 
-    internal static (Guid ItemId, string Lang, bool Translate) ParseId(string id)
+    // Download id: <itemId N>:<lang>:<s|t|b>. SubtitleManager splits the id on '_'
+    // only, so ':' survives its provider-prefix handling.
+    internal static string BuildId(Guid itemId, string lang, string mode) =>
+        $"{itemId:N}:{lang}:{mode switch { "source" => "s", "bilingual" => "b", _ => "t" }}";
+
+    internal static (Guid ItemId, string Lang, string Mode) ParseId(string id)
     {
         var parts = (id ?? string.Empty).Split(':');
         if (!Guid.TryParse(parts[0], out var itemId))
         {
-            return (Guid.Empty, "und", true);
+            return (Guid.Empty, "und", "translated");
         }
 
         var lang = parts.Length > 1 && parts[1].Length == 3 ? parts[1] : "und";
-        var translate = parts.Length <= 2 || parts[2] != "s";
-        return (itemId, lang, translate);
+        var mode = parts.Length > 2
+            ? parts[2] switch { "s" => "source", "b" => "bilingual", _ => "translated" }
+            : "translated";
+        return (itemId, lang, mode);
     }
 
     private Guid ResolveItemId(SubtitleSearchRequest request)

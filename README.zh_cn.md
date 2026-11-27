@@ -7,7 +7,8 @@
 Jellyfin 语音字幕插件：**ASR 语音转写 + LLM 字幕翻译**（OpenAI Compatible 接口）。
 
 工作方式与 OpenSubtitles 完全一致：**内容先就绪 → 轨道后出现 → 用户最后选**。
-在媒体的「编辑字幕」对话框里搜索并下载「LM Subtitles」，服务端全量转写＋翻译，
+在媒体的「编辑字幕」对话框里搜索，会出现原文/译文/双语三个条目，按需下载；
+服务端转写一次共享，只翻译你下载的那种，
 完成后字幕自动落盘并出现在所有客户端的字幕列表里。已完成的结果永久缓存，重复下载不再调 API。
 
 ## 1. 工作原理
@@ -16,7 +17,7 @@ Jellyfin 语音字幕插件：**ASR 语音转写 + LLM 字幕翻译**（OpenAI C
 媒体详情页 → ⋮ 菜单 → 编辑字幕（Edit Subtitles）
         │  搜索: POST Items/{id}/RemoteSearch/Subtitles/{lang}
         ▼
-LmSubtitleProvider.Search() ──返回一条「LM Subtitles」候选──► 对话框列表
+LmSubtitleProvider.Search() ──返回原文/译文/双语三条候选──► 对话框列表
         │
         │  点下载: POST Items/{id}/RemoteSearch/Subtitles/{subtitleId}
         ▼
@@ -82,10 +83,14 @@ https://raw.githubusercontent.com/gitsang/jellyfin-lmsubs/main/manifest.json
 ### 4.2 使用
 
 媒体详情页 → ⋮ 菜单 → **编辑字幕（Edit Subtitles）** → 选语言 → 搜索 →
-点「LM Subtitles」条目旁的下载按钮。
+出现三个条目，按需下载：
 
-搜索时选的语言**就是翻译目标语言**——不再有目标语言设置项。条目描述里会显示
-ASR/翻译模型和目标语言；**生成过程中再次搜索，可以看到实时进度百分比**。
+- **LM Subtitles — Source (…)**：仅转写原文，不花翻译的钱
+- **LM Subtitles — <语言>**：仅译文
+- **LM Subtitles — Bilingual (… + …)**：原文 + 译文双语两行
+
+三者共用同一次 ASR；只有下载译文/双语条目才会触发翻译。搜索时选的语言
+**就是翻译目标语言**。条目描述显示模型/目标语言；**生成中再次搜索可看实时进度**。
 
 生成完成后（几分钟），字幕出现在该媒体的字幕列表里，任意客户端选中即可。
 
@@ -95,7 +100,7 @@ ASR/翻译模型和目标语言；**生成过程中再次搜索，可以看到�
 
 | 方法 | 路径                                                          | 说明                                                          |
 | ---- | ------------------------------------------------------------- | ------------------------------------------------------------- |
-| POST | `/LmSubs/Generate`                                            | `{itemId, translate?, targetLanguage?, restart?}` 启动全量生成 |
+| POST | `/LmSubs/Generate`                                            | `{itemId, mode? (source\|translated\|bilingual), targetLanguage?, restart?}` |
 | GET  | `/LmSubs/Status/{itemId}`                                     | 状态/进度（`queued/running/done/error/cancelled`）            |
 | POST | `/LmSubs/Cancel/{itemId}`                                     | 取消                                                          |
 | GET | `/LmSubs/Tasks`                                               | 全部任务：运行中 + 已完成（含重启后仅剩缓存的条目）        |

@@ -34,10 +34,6 @@ public class PluginConfiguration : BasePluginConfiguration
     // Estimated input-token budget per translate request (system + context + lines). 0 = unlimited.
     public int ContextSize { get; set; } = 6000;
 
-    public bool AutoTranslate { get; set; } = true;
-
-    public string BilingualMode { get; set; } = "bilingual";
-
     public string FfmpegPath { get; set; } = string.Empty;
 
     public int AudioBitrateKbps { get; set; } = 48;

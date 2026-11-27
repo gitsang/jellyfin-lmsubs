@@ -90,18 +90,7 @@
                             <input is="emby-input" type="number" id="ContextSize" min="0" max="1000000" label="Context size (estimated input tokens per request, 0 = unlimited)" />
                             <div class="fieldDescription">Batches are packed to stay under this budget (prompt + context pairs + lines; CJK ≈ 1 token/char, other ≈ 1 token/4 chars). Set below your model's window, e.g. 6000 for a 32k model. Oversized batches reported by the provider are split and retried automatically.</div>
                         </div>
-                        <div class="selectContainer">
-                            <select is="emby-select" id="BilingualMode" label="Subtitle style">
-                                <option value="bilingual">Bilingual (source + translation, two lines)</option>
-                                <option value="replace">Translation only</option>
-                            </select>
-                        </div>
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input is="emby-checkbox" type="checkbox" id="AutoTranslate" />
-                                <span>Include translation (uncheck for transcription only)</span>
-                            </label>
-                        </div>
+                        <div class="fieldDescription">Search lists three entries — Source (transcription only), Translated, and Bilingual — sharing one ASR pass. Download the one you want; translation runs only for translated/bilingual entries.</div>
                         <div class="inputContainer">
                             <input is="emby-input" type="text" id="TranslateExtraPrompt" label="Extra translation instructions (optional)" />
                             <div class="fieldDescription">e.g. keep English names; casual tone; no explanations.</div>

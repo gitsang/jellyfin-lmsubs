@@ -65,6 +65,19 @@ public class SubtitleStore
     public string CacheSrtPath(Guid itemId, bool translated, string lang) =>
         Path.Combine(ItemDir(itemId), !translated ? "source.srt" : $"translated.{LangSlug(lang)}.srt");
 
+    // Keyed cache: source | <langslug> | bi-<langslug>.
+    public string KeyedSrtPath(Guid itemId, string cacheKey) =>
+        Path.Combine(ItemDir(itemId), cacheKey == "source" ? "source.srt" : $"translated.{cacheKey}.srt");
+
+    public void RenderKeyed(Guid itemId, string cacheKey, IEnumerable<SubtitleCue> cues) =>
+        File.WriteAllText(KeyedSrtPath(itemId, cacheKey), SubtitleText.ToSrt(cues));
+
+    public string? GetSrtKeyed(Guid itemId, string cacheKey)
+    {
+        var file = KeyedSrtPath(itemId, cacheKey);
+        return File.Exists(file) ? File.ReadAllText(file) : null;
+    }
+
     public void Render(Guid itemId, bool translated, string lang, IEnumerable<SubtitleCue> cues)
     {
         File.WriteAllText(CacheSrtPath(itemId, translated, lang), SubtitleText.ToSrt(cues));
@@ -131,15 +144,15 @@ public class SubtitleStore
             return;
         }
 
-        foreach (var f in new[] { $"cues.{langSlug}.json", $"translated.{langSlug}.srt", $"source.srt" })
+        var files = langSlug == "source"
+            ? new[] { "cues.source.json", "source.srt" }
+            : new[] { $"cues.{langSlug}.json", $"translated.{langSlug}.srt" };
+        foreach (var f in files)
         {
-            if (langSlug == "source" || !f.StartsWith("source.", StringComparison.Ordinal))
+            var p = Path.Combine(dir, f);
+            if (File.Exists(p))
             {
-                var p = Path.Combine(dir, f);
-                if (File.Exists(p))
-                {
-                    File.Delete(p);
-                }
+                File.Delete(p);
             }
         }
 

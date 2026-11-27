@@ -70,9 +70,7 @@ export default function (view) {
             NUM_FIELDS.forEach((k) => { $('#' + k).value = config[k]; });
             FLOAT_FIELDS.forEach((k) => { $('#' + k).value = config[k]; });
             SELECT_FIELDS.forEach((k) => { $('#' + k).value = config[k] || 'custom'; });
-            $('#BilingualMode').value = config.BilingualMode || 'bilingual';
             $('#LogLevel').value = config.LogLevel || '';
-            $('#AutoTranslate').checked = config.AutoTranslate !== false;
             updateAsrPlaceholder();
             updateTranslatePlaceholder();
             Dashboard.hideLoadingMsg();
@@ -85,9 +83,7 @@ export default function (view) {
         NUM_FIELDS.forEach((k) => { c[k] = parseInt($('#' + k).value, 10) || 0; });
         FLOAT_FIELDS.forEach((k) => { c[k] = parseFloat($('#' + k).value) || 0; });
         SELECT_FIELDS.forEach((k) => { c[k] = $('#' + k).value; });
-        c.BilingualMode = $('#BilingualMode').value;
         c.LogLevel = $('#LogLevel').value;
-        c.AutoTranslate = $('#AutoTranslate').checked;
         return c;
     }
 
@@ -123,7 +119,7 @@ export default function (view) {
         box.innerHTML = tasks.map((t, i) => {
             const running = t.status === 'queued' || t.status === 'running';
             const pct = Math.round((t.progress || 0) * 100);
-            const lang = t.translate === false ? 'transcription only' : escapeHtml(t.targetLanguage);
+            const lang = t.mode === 'source' ? 'source' : escapeHtml(t.targetLanguage) + (t.mode === 'bilingual' ? ' (bilingual)' : '');
             const detail = running
                 ? escapeHtml(t.stage || t.status) + ' — ' + pct + '%'
                 : (t.status === 'done' ? 'done' : escapeHtml(t.status) + (t.error ? ': ' + escapeHtml(t.error) : ''));
@@ -144,7 +140,7 @@ export default function (view) {
         }));
         box.querySelectorAll('.lm-task-del').forEach((b) => b.addEventListener('click', () => {
             const t = tasks[+b.dataset.i];
-            const lang = t.translate === false ? 'source' : t.targetLanguage;
+            const lang = t.cacheKey || (t.mode === 'source' ? 'source' : t.targetLanguage);
             Dashboard.confirm('Delete the cached result for "' + t.itemName + '" (' + lang + ')? Downloaded subtitle files are kept.', 'Delete task', (ok) => {
                 if (!ok) return;
                 ApiClient.ajax({ type: 'DELETE', url: ApiClient.getUrl('LmSubs/Tasks/' + t.itemId, { lang: lang }) })
