@@ -92,14 +92,15 @@ has a **Tasks** list (running + completed): stop a running task, or delete a com
 Item details → ⋮ menu → **Edit Subtitles** → pick a language → Search →
 three entries appear; download the one you want:
 
-- **LM Subtitles — Source (…)**: transcription only, no translation cost
-- **LM Subtitles — <language>**: translation only
-- **LM Subtitles — Bilingual (… + …)**: source + translation, two lines
+- **LM Subtitles - Source**: transcription only, no translation cost
+- **LM Subtitles - Translate**: translation only
+- **LM Subtitles - Bilingual**: source + translation, two lines
 
 All three share one ASR pass, and translated/bilingual share **one translation job** per
 language — the translation runs once and the two entries are just different renders of it.
 The language you pick in the search dialog **is the translation target**.
-Descriptions show models/target and **live progress percentages on re-search**.
+Descriptions show models/target with **live progress on re-search** — `(40%)` while
+running, `(Completed)` when done.
 
 When generation finishes (a few minutes), the subtitle appears in the item's subtitle list,
 selectable from any client.

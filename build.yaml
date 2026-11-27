@@ -1,7 +1,7 @@
 ---
 name: "LMSubs"
 guid: "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b"
-version: "1.4.1.1"
+version: "1.4.2.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "gitsang"
@@ -17,6 +17,13 @@ category: "Metadata"
 artifacts:
   - "Jellyfin.Plugin.LmSubs.dll"
 changelog: |
+  ## 1.4.2.0
+  - Fixed search entry names: LM Subtitles - Source / Translate / Bilingual
+    (target language stays in the description).
+  - Completed state shows "(Completed)" on the model line instead of a
+    separate "Ready (cached)" line.
+  - Tasks list: one ASR row + one Translate row per language (translated
+    and bilingual merged; legacy and bi- caches deduplicated).
   ## 1.4.1.1
   - Fix "Ready (cached)" not shown for legacy caches in search results
     (cache lookup used the ISO code instead of the language slug).

@@ -36,16 +36,15 @@ public class LmSubtitleProvider : ISubtitleProvider
         var target = SubtitleService.NormalizeTargetLanguage(request.Language);
         var targetCode = SubtitleService.ThreeLetterLanguage(target);
         var targetSlug = SubtitleStore.LangSlug(target);
-        var sourceName = _service.SourceLanguageName(itemId);
         var sourceCode = _service.SourceLanguageCode(itemId);
 
         var infos = new List<RemoteSubtitleInfo>
         {
-            BuildInfo(itemId, "source", sourceCode, targetSlug, $"LM Subtitles — Source ({sourceName})",
+            BuildInfo(itemId, "source", sourceCode, targetSlug, "LM Subtitles - Source",
                 $"ASR: {config.AsrModel}", aiTranslated: false),
-            BuildInfo(itemId, "translated", targetCode, targetSlug, $"LM Subtitles — {target}",
+            BuildInfo(itemId, "translated", targetCode, targetSlug, "LM Subtitles - Translate",
                 $"ASR: {config.AsrModel}\nTranslate: {config.TranslateModel}\nTarget: {target}", aiTranslated: true),
-            BuildInfo(itemId, "bilingual", targetCode, targetSlug, $"LM Subtitles — Bilingual ({sourceName} + {target})",
+            BuildInfo(itemId, "bilingual", targetCode, targetSlug, "LM Subtitles - Bilingual",
                 $"ASR: {config.AsrModel}\nTranslate: {config.TranslateModel}\nTarget: {target}", aiTranslated: true)
         };
 
@@ -60,27 +59,35 @@ public class LmSubtitleProvider : ISubtitleProvider
             (mode == "source" || SubtitleService.ThreeLetterLanguage(j.TargetLanguage) == langCode));
         var session = _service.GetSession(itemId);
 
+        var asrDone = session is { Status: "done" } || _service.Store.GetSrtKeyed(itemId, "source") != null;
+        var translateDone = job is { Status: "done" } || _service.Store.GetAnyTranslationSrt(itemId, langSlug) != null;
+
         if (job is { Status: "queued" or "running" })
         {
-            var asrPct = job.AsrProgress * 100;
-            comment = comment.Replace($"ASR: ", $"ASR ({asrPct:0}%): ", StringComparison.Ordinal);
+            comment = comment.Replace("ASR: ", $"ASR ({job.AsrProgress * 100:0}%): ", StringComparison.Ordinal);
             if (job.Translate)
             {
                 comment = comment.Replace("Translate: ", $"Translate ({job.TranslateProgress * 100:0}%): ", StringComparison.Ordinal);
             }
         }
-        else if (session is { Status: "queued" or "running" } && mode == "source")
+        else
         {
-            comment = comment.Replace("ASR: ", $"ASR ({session.Progress * 100:0}%): ", StringComparison.Ordinal);
+            if (session is { Status: "queued" or "running" } && mode == "source")
+            {
+                comment = comment.Replace("ASR: ", $"ASR ({session.Progress * 100:0}%): ", StringComparison.Ordinal);
+            }
+            else if (asrDone)
+            {
+                comment = comment.Replace("ASR: ", "ASR (Completed): ", StringComparison.Ordinal);
+            }
+
+            if (mode != "source" && translateDone)
+            {
+                comment = comment.Replace("Translate: ", "Translate (Completed): ", StringComparison.Ordinal);
+            }
         }
-        else if (job is { Status: "done" } ||
-                 (mode == "source"
-                     ? _service.Store.GetSrtKeyed(itemId, "source")
-                     : _service.Store.GetAnyTranslationSrt(itemId, langSlug)) != null)
-        {
-            comment += "\nReady (cached)";
-        }
-        else if (job is { Status: "error" })
+
+        if (job is { Status: "error" })
         {
             comment += $"\nLast attempt failed: {job.Error}";
         }

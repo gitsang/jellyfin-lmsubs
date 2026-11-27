@@ -8,6 +8,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "1.4.2.0",
+        "changelog": "Fixed entry names (LM Subtitles - Source/Translate/Bilingual). Completed shows '(Completed)' on model lines instead of 'Ready (cached)'. Tasks: one ASR + one Translate row per language.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.4.2.0/lmsubs_1.4.2.0.zip",
+        "checksum": "e91343e65e552205c56ae3ee26efebf4",
+        "timestamp": "2026-11-27T06:50:14Z"
+      },
+      {
         "version": "1.4.1.1",
         "changelog": "Fix Ready (cached) badge missing for legacy caches in search results (ISO code vs language slug mismatch).",
         "targetAbi": "10.11.0.0",

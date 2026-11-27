@@ -60,13 +60,21 @@ public class LmSubsController : ControllerBase
     [HttpGet("Tasks")]
     public ActionResult Tasks()
     {
+        // One ASR row + one Translate row per (item, language). Translated and
+        // bilingual are renders of the same translation, never separate rows.
         var tasks = new List<Dictionary<string, object?>>();
         var seen = new HashSet<(Guid, string)>();
 
         foreach (var job in _subtitles.AllJobs().OrderByDescending(j => j.StartedUtc))
         {
-            seen.Add((job.ItemId, job.CacheKey));
-            tasks.Add(JobDto(job));
+            if (seen.Add((job.ItemId, job.CacheKey)))
+            {
+                tasks.Add(JobDto(job));
+                if (job.Translate)
+                {
+                    seen.Add((job.ItemId, SubtitleStore.LangSlug(job.TargetLanguage)));
+                }
+            }
         }
 
         // Cache-only entries (e.g. after a server restart) still show as completed tasks.
@@ -74,10 +82,14 @@ public class LmSubsController : ControllerBase
         {
             foreach (var slug in _subtitles.Store.ListCachedLanguages(itemId))
             {
-                if (seen.Add((itemId, slug)))
+                // Merge bi-<lang> and legacy <lang> into a single translate row.
+                var langSlug = slug.StartsWith("bi-", StringComparison.Ordinal) ? slug[3..] : slug;
+                if (seen.Add((itemId, langSlug)))
                 {
-                    tasks.Add(CachedDto(itemId, slug));
+                    tasks.Add(CachedDto(itemId, "bi-" + langSlug));
                 }
+
+                seen.Add((itemId, "bi-" + langSlug));
             }
 
             if (_subtitles.Store.HasSourceCache(itemId) && seen.Add((itemId, "source")))

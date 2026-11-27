@@ -85,13 +85,13 @@ https://raw.githubusercontent.com/gitsang/jellyfin-lmsubs/main/manifest.json
 媒体详情页 → ⋮ 菜单 → **编辑字幕（Edit Subtitles）** → 选语言 → 搜索 →
 出现三个条目，按需下载：
 
-- **LM Subtitles — Source (…)**：仅转写原文，不花翻译的钱
-- **LM Subtitles — <语言>**：仅译文
-- **LM Subtitles — Bilingual (… + …)**：原文 + 译文双语两行
+- **LM Subtitles - Source**：仅转写原文，不花翻译的钱
+- **LM Subtitles - Translate**：仅译文
+- **LM Subtitles - Bilingual**：原文 + 译文双语两行
 
 三者共用同一次 ASR；译文和双语还共用**同一个翻译任务**——每种语言只翻译一次，
 两个条目只是同一份数据的两种渲染。搜索时选的语言
-**就是翻译目标语言**。条目描述显示模型/目标语言；**生成中再次搜索可看实时进度**。
+**就是翻译目标语言**。条目描述显示模型/目标语言；**再次搜索可看进度**——运行中 `(40%)`，完成后 `(Completed)`。
 
 生成完成后（几分钟），字幕出现在该媒体的字幕列表里，任意客户端选中即可。
 

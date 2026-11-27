@@ -119,7 +119,7 @@ export default function (view) {
         box.innerHTML = tasks.map((t, i) => {
             const running = t.status === 'queued' || t.status === 'running';
             const pct = Math.round((t.progress || 0) * 100);
-            const lang = t.mode === 'source' ? 'source' : escapeHtml(t.targetLanguage) + (t.mode === 'bilingual' ? ' (bilingual)' : '');
+            const lang = t.mode === 'source' ? 'ASR' : 'Translate → ' + escapeHtml(t.targetLanguage);
             const detail = running
                 ? escapeHtml(t.stage || t.status) + ' — ' + pct + '%'
                 : (t.status === 'done' ? 'done' : escapeHtml(t.status) + (t.error ? ': ' + escapeHtml(t.error) : ''));
