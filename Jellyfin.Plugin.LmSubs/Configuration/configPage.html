@@ -120,6 +120,14 @@
                     <div class="inputContainer">
                         <input is="emby-input" type="number" id="RequestTimeoutSeconds" min="30" max="3600" label="Request timeout (seconds)" />
                     </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="SilenceNoiseDb" min="-60" max="-10" label="Silence noise floor dB (timestamp-less ASR timing)" />
+                        <div class="fieldDescription">Audio below this level counts as silence. Speech pauses are skipped when placing subtitles. -35 suits dialogue; raise toward -30 for noisy media.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="SilenceMinSeconds" min="0.1" max="5" step="0.05" label="Minimum silence length (seconds)" />
+                        <div class="fieldDescription">Only gaps at least this long count as silence (0.45 ≈ between sentences, not between words).</div>
+                    </div>
                     <div class="selectContainer">
                         <select is="emby-select" id="LogLevel" label="Log level">
                             <option value="">Server default</option>

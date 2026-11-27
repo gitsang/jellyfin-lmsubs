@@ -105,7 +105,11 @@ public static class SubtitleText
     private const string SentenceEnders = "。！？!?…";
     private const string ClauseBreaks = "，、；：,;:";
 
-    public static List<SubtitleCue> Normalize(IEnumerable<AsrSegment> segments, double maxCharsPerCue = 80, double maxCueSeconds = 8)
+    public static List<SubtitleCue> Normalize(
+        IEnumerable<AsrSegment> segments,
+        double maxCharsPerCue = 80,
+        double maxCueSeconds = 8,
+        IReadOnlyList<(double Start, double End)>? speechRanges = null)
     {
         var cues = new List<SubtitleCue>();
         foreach (var seg in segments.OrderBy(s => s.StartSeconds))
@@ -124,20 +128,99 @@ public static class SubtitleText
                 .SelectMany(s => SplitText(s, (int)maxCharsPerCue))
                 .ToList();
 
-            // A short single sentence may exceed maxCueSeconds only because the ASR
-            // segment span is long (timestamp-less providers); keep it as one cue.
             var totalChars = pieces.Sum(p => p.Length);
-            var t = seg.StartSeconds;
-            foreach (var piece in pieces)
+
+            // Speech ranges (relative to the segment start) let us skip silences:
+            // distribute characters over the speech timeline, then map back.
+            var ranges = speechRanges != null
+                ? speechRanges
+                    .Select(r => (Start: Math.Max(0, r.Start - seg.StartSeconds), End: Math.Min(span, r.End - seg.StartSeconds)))
+                    .Where(r => r.End > r.Start)
+                    .OrderBy(r => r.Start)
+                    .ToList()
+                : null;
+            var speechTotal = ranges?.Sum(r => r.End - r.Start) ?? 0;
+
+            if (ranges != null && ranges.Count > 0 && speechTotal > 0.5)
             {
-                var pieceSpan = Math.Max(span * piece.Length / Math.Max(totalChars, 1), 0.5);
-                var end = Math.Min(t + pieceSpan, seg.EndSeconds);
-                cues.Add(new SubtitleCue(t, Math.Max(end, t + 0.3), piece));
-                t = end;
+                var charsDone = 0;
+                foreach (var piece in pieces)
+                {
+                    var s0 = (double)charsDone / totalChars * speechTotal;
+                    charsDone += piece.Length;
+                    var s1 = (double)charsDone / totalChars * speechTotal;
+                    var start = seg.StartSeconds + SpeechToReal(ranges, s0);
+                    var end = seg.StartSeconds + SpeechToReal(ranges, s1);
+
+                    // Snap near silence boundaries: sentence edges usually ARE pauses.
+                    start = Snap(start - seg.StartSeconds, ranges, 1.5) + seg.StartSeconds;
+                    end = Snap(end - seg.StartSeconds, ranges, 1.5) + seg.StartSeconds;
+
+                    cues.Add(new SubtitleCue(start, Math.Max(end, start + 0.3), piece));
+                }
+            }
+            else
+            {
+                var t = seg.StartSeconds;
+                foreach (var piece in pieces)
+                {
+                    var pieceSpan = Math.Max(span * piece.Length / Math.Max(totalChars, 1), 0.5);
+                    var end = Math.Min(t + pieceSpan, seg.EndSeconds);
+                    cues.Add(new SubtitleCue(t, Math.Max(end, t + 0.3), piece));
+                    t = end;
+                }
+            }
+        }
+
+        // Keep cues monotonic after snapping.
+        for (var i = 1; i < cues.Count; i++)
+        {
+            if (cues[i].Start < cues[i - 1].End)
+            {
+                var end = Math.Max(cues[i].End, cues[i - 1].End + 0.3);
+                cues[i] = cues[i] with { Start = cues[i - 1].End, End = end };
             }
         }
 
         return cues;
+    }
+
+    // Map a position on the concatenated speech timeline back to segment-relative time.
+    internal static double SpeechToReal(IReadOnlyList<(double Start, double End)> ranges, double speechPos)
+    {
+        var acc = 0.0;
+        foreach (var r in ranges)
+        {
+            var len = r.End - r.Start;
+            if (speechPos <= acc + len)
+            {
+                return r.Start + (speechPos - acc);
+            }
+
+            acc += len;
+        }
+
+        return ranges[^1].End;
+    }
+
+    // Pull a timestamp to a nearby speech-range edge when within tolerance.
+    internal static double Snap(double t, IReadOnlyList<(double Start, double End)> ranges, double tolerance)
+    {
+        double best = t, bestDist = tolerance;
+        foreach (var r in ranges)
+        {
+            foreach (var edge in new[] { r.Start, r.End })
+            {
+                var d = Math.Abs(edge - t);
+                if (d < bestDist)
+                {
+                    best = edge;
+                    bestDist = d;
+                }
+            }
+        }
+
+        return best;
     }
 
     // Split after sentence-ending punctuation (。！？!?…), keeping the punctuation

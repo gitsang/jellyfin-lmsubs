@@ -49,6 +49,11 @@ public class PluginConfiguration : BasePluginConfiguration
     // Empty = follow the server's log level. Otherwise Debug/Information/Warning/Error/None.
     public string LogLevel { get; set; } = string.Empty;
 
+    // Silence detection for timestamp-less ASR: noise floor (dB) and minimum silence length (s).
+    public int SilenceNoiseDb { get; set; } = -35;
+
+    public double SilenceMinSeconds { get; set; } = 0.45;
+
     public string EffectiveAsrBaseUrl =>
         string.IsNullOrWhiteSpace(AsrBaseUrl) ? ProviderPresets.DefaultBaseUrl(AsrProvider) : AsrBaseUrl;
 

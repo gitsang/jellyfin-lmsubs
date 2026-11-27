@@ -390,16 +390,35 @@ public class SubtitleService
                 var file = Path.Combine(tempDir, $"chunk_{i:0000}.mp3");
                 await _extractor.ExtractAsync(path, null, cs, len, file, config, ct).ConfigureAwait(false);
                 List<AsrSegment> segments;
+                List<(double Start, double End)>? speechRanges = null;
                 try
                 {
                     segments = await _openAi.TranscribeAsync(file, cs, len, config, ct).ConfigureAwait(false);
+
+                    // Timestamp-less fallback (one segment spanning the whole chunk):
+                    // locate real speech via silence detection so timing skips pauses.
+                    if (segments.Count == 1 &&
+                        segments[0].StartSeconds <= cs + 0.01 &&
+                        segments[0].EndSeconds >= cs + len - 0.01)
+                    {
+                        var ranges = await _extractor.DetectSpeechRangesAsync(file, len, config, ct).ConfigureAwait(false);
+                        if (ranges.Count > 0)
+                        {
+                            speechRanges = ranges.Select(r => (r.Start + cs, r.End + cs)).ToList();
+                            _logger.Debug("LMSubs: chunk {Index}: {Ranges} speech ranges via silencedetect", i + 1, ranges.Count);
+                        }
+                        else
+                        {
+                            _logger.Debug("LMSubs: chunk {Index}: silencedetect unavailable, proportional timing", i + 1);
+                        }
+                    }
                 }
                 finally
                 {
                     try { File.Delete(file); } catch { /* best effort */ }
                 }
 
-                var chunkCues = SubtitleText.Normalize(segments);
+                var chunkCues = SubtitleText.Normalize(segments, speechRanges: speechRanges);
                 session.AppendChunk(chunkCues);
                 _store.SaveSourceCues(session.ItemId, session.SnapshotCues());
                 _logger.Debug("LMSubs: ASR chunk {Index}/{Total} of {Item}: {Cues} cues", i + 1, session.ChunkCount, session.ItemName, chunkCues.Count);

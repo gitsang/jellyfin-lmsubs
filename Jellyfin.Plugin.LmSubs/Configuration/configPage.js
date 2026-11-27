@@ -26,8 +26,9 @@ const TEXT_FIELDS = [
 ];
 const NUM_FIELDS = [
     'ChunkSeconds', 'ContextPairs', 'TranslateBatchSize', 'ContextSize',
-    'AudioBitrateKbps', 'RequestTimeoutSeconds'
+    'AudioBitrateKbps', 'RequestTimeoutSeconds', 'SilenceNoiseDb'
 ];
+const FLOAT_FIELDS = ['SilenceMinSeconds'];
 const SELECT_FIELDS = ['AsrProvider', 'TranslateProvider'];
 
 export default function (view) {
@@ -67,6 +68,7 @@ export default function (view) {
         ApiClient.getPluginConfiguration(PLUGIN_ID).then((config) => {
             TEXT_FIELDS.forEach((k) => { $('#' + k).value = config[k] || ''; });
             NUM_FIELDS.forEach((k) => { $('#' + k).value = config[k]; });
+            FLOAT_FIELDS.forEach((k) => { $('#' + k).value = config[k]; });
             SELECT_FIELDS.forEach((k) => { $('#' + k).value = config[k] || 'custom'; });
             $('#BilingualMode').value = config.BilingualMode || 'bilingual';
             $('#LogLevel').value = config.LogLevel || '';
@@ -81,6 +83,7 @@ export default function (view) {
         const c = {};
         TEXT_FIELDS.forEach((k) => { c[k] = $('#' + k).value.trim(); });
         NUM_FIELDS.forEach((k) => { c[k] = parseInt($('#' + k).value, 10) || 0; });
+        FLOAT_FIELDS.forEach((k) => { c[k] = parseFloat($('#' + k).value) || 0; });
         SELECT_FIELDS.forEach((k) => { c[k] = $('#' + k).value; });
         c.BilingualMode = $('#BilingualMode').value;
         c.LogLevel = $('#LogLevel').value;

@@ -252,4 +252,83 @@ public class ParsingTests
         Assert.Single(cues);
         Assert.Equal("你好。", cues[0].Text);
     }
+
+    [Fact]
+    public void ParseSpeechRanges_InvertsSilences()
+    {
+        var stderr = """
+            [silencedetect @ 0x1] silence_start: 10
+            [silencedetect @ 0x1] silence_end: 15 | silence_duration: 5
+            [silencedetect @ 0x1] silence_start: 40.5
+            [silencedetect @ 0x1] silence_end: 42.25 | silence_duration: 1.75
+            """;
+        var ranges = AudioExtractor.ParseSpeechRanges(stderr, 60);
+        Assert.Equal(new (double, double)[] { (0, 10), (15, 40.5), (42.25, 60) }, ranges);
+    }
+
+    [Fact]
+    public void ParseSpeechRanges_TrailingSilence()
+    {
+        var stderr = "[silencedetect @ 0x1] silence_start: 50\n";
+        var ranges = AudioExtractor.ParseSpeechRanges(stderr, 60);
+        Assert.Equal(new (double, double)[] { (0, 50) }, ranges);
+    }
+
+    [Fact]
+    public void ParseSpeechRanges_AllSilent()
+    {
+        var stderr = "[silencedetect @ 0x1] silence_start: 0\n";
+        Assert.Empty(AudioExtractor.ParseSpeechRanges(stderr, 60));
+    }
+
+    [Fact]
+    public void SpeechToReal_SkipsGaps()
+    {
+        var ranges = new (double Start, double End)[] { (0, 10), (20, 30) };
+        Assert.Equal(5, SubtitleText.SpeechToReal(ranges, 5), 3);
+        Assert.Equal(10, SubtitleText.SpeechToReal(ranges, 10), 3); // boundary belongs to the ending range
+        Assert.Equal(25, SubtitleText.SpeechToReal(ranges, 15), 3);
+        Assert.Equal(30, SubtitleText.SpeechToReal(ranges, 25), 3); // past end clamps
+    }
+
+    [Fact]
+    public void Normalize_SpeechRanges_SkipsIntroSilence()
+    {
+        // 60s chunk, first 30s silent (intro music below noise floor would be speech,
+        // but pure silence here): two equal sentences must live in [30,60], not [0,60].
+        var s1 = new string('一', 20) + "。";
+        var s2 = new string('二', 20) + "！";
+        var ranges = new (double Start, double End)[] { (30, 60) };
+        var cues = SubtitleText.Normalize(new[] { new AsrSegment(0, 60, s1 + s2) }, speechRanges: ranges);
+        Assert.Equal(2, cues.Count);
+        Assert.Equal(30, cues[0].Start, 1);
+        Assert.Equal(45, cues[0].End, 1);
+        Assert.Equal(45, cues[1].Start, 1);
+        Assert.Equal(60, cues[1].End, 1);
+    }
+
+    [Fact]
+    public void Normalize_SpeechRanges_SnapsToPause()
+    {
+        // Sentence boundary lands 1s before a real pause edge -> snapped onto it.
+        var s1 = new string('一', 21) + "。"; // 22 chars
+        var s2 = new string('二', 20) + "。"; // 21 chars
+        var ranges = new (double Start, double End)[] { (0, 11), (12, 22) };
+        var cues = SubtitleText.Normalize(new[] { new AsrSegment(0, 22, s1 + s2) }, speechRanges: ranges);
+        Assert.Equal(2, cues.Count);
+        // proportional boundary ~10.7 on speech timeline -> real ~10.7, snaps to 11.
+        Assert.Equal(11, cues[0].End, 1);
+        Assert.True(cues[1].Start >= 11);
+    }
+
+    [Fact]
+    public void Normalize_EmptyRangesFallsBack()
+    {
+        var cues = SubtitleText.Normalize(
+            new[] { new AsrSegment(0, 60, new string('字', 30) + "。" + new string('词', 30) + "。") },
+            speechRanges: new (double, double)[0]);
+        Assert.Equal(2, cues.Count);
+        Assert.Equal(0, cues[0].Start, 1);
+        Assert.Equal(30, cues[0].End, 1);
+    }
 }
