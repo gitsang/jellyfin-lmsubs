@@ -1,7 +1,7 @@
 ---
 name: "LMSubs"
 guid: "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b"
-version: "1.4.2.0"
+version: "1.4.3.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "gitsang"
@@ -17,6 +17,12 @@ category: "Metadata"
 artifacts:
   - "Jellyfin.Plugin.LmSubs.dll"
 changelog: |
+  ## 1.4.3.0
+  - Task list decoupled from subtitle entries: rows are pipeline units —
+    one ASR per item, one Translate per language (kind: asr|translate).
+    No bilingual/translated wording; subtitle downloads are just triggers.
+  - DELETE /LmSubs/Tasks/{itemId}?lang= takes source or a language; a
+    translate delete clears both cache representations of that language.
   ## 1.4.2.0
   - Fixed search entry names: LM Subtitles - Source / Translate / Bilingual
     (target language stays in the description).

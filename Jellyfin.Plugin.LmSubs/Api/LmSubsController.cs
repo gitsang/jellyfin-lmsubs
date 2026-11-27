@@ -60,20 +60,24 @@ public class LmSubsController : ControllerBase
     [HttpGet("Tasks")]
     public ActionResult Tasks()
     {
-        // One ASR row + one Translate row per (item, language). Translated and
-        // bilingual are renders of the same translation, never separate rows.
+        // Tasks are pipeline units, not subtitle entries: one ASR per item and
+        // one Translate per (item, language). Subtitle downloads merely trigger them.
         var tasks = new List<Dictionary<string, object?>>();
-        var seen = new HashSet<(Guid, string)>();
+        var seenAsr = new HashSet<Guid>();
+        var seenTranslate = new HashSet<(Guid, string)>();
 
         foreach (var job in _subtitles.AllJobs().OrderByDescending(j => j.StartedUtc))
         {
-            if (seen.Add((job.ItemId, job.CacheKey)))
+            if (job.Translate)
+            {
+                if (seenTranslate.Add((job.ItemId, SubtitleStore.LangSlug(job.TargetLanguage))))
+                {
+                    tasks.Add(JobDto(job));
+                }
+            }
+            else if (seenAsr.Add(job.ItemId))
             {
                 tasks.Add(JobDto(job));
-                if (job.Translate)
-                {
-                    seen.Add((job.ItemId, SubtitleStore.LangSlug(job.TargetLanguage)));
-                }
             }
         }
 
@@ -82,17 +86,14 @@ public class LmSubsController : ControllerBase
         {
             foreach (var slug in _subtitles.Store.ListCachedLanguages(itemId))
             {
-                // Merge bi-<lang> and legacy <lang> into a single translate row.
                 var langSlug = slug.StartsWith("bi-", StringComparison.Ordinal) ? slug[3..] : slug;
-                if (seen.Add((itemId, langSlug)))
+                if (seenTranslate.Add((itemId, langSlug)))
                 {
-                    tasks.Add(CachedDto(itemId, "bi-" + langSlug));
+                    tasks.Add(CachedDto(itemId, langSlug));
                 }
-
-                seen.Add((itemId, "bi-" + langSlug));
             }
 
-            if (_subtitles.Store.HasSourceCache(itemId) && seen.Add((itemId, "source")))
+            if (_subtitles.Store.HasSourceCache(itemId) && seenAsr.Add(itemId))
             {
                 tasks.Add(CachedDto(itemId, "source"));
             }
@@ -105,28 +106,33 @@ public class LmSubsController : ControllerBase
     [HttpDelete("Tasks/{itemId:guid}")]
     public ActionResult DeleteTask([FromRoute] Guid itemId, [FromQuery] string? lang = null)
     {
-        // lang is a cache key: source | <langslug> | bi-<langslug>.
-        var slug = lang == null ? null : (lang == "source" || lang.StartsWith("bi-", StringComparison.Ordinal) ? lang : SubtitleStore.LangSlug(lang));
-        if (slug == null)
+        // lang: "source" (ASR task) or a language name/slug (Translate task); omitted = whole item.
+        if (lang == null)
         {
             _subtitles.Cancel(itemId);
-        }
-        else
-        {
-            var job = _subtitles.AllJobs().FirstOrDefault(j => j.ItemId == itemId && j.CacheKey == slug);
-            job?.Cts.Cancel();
+            _subtitles.Forget(itemId);
+            _subtitles.Store.DeleteCache(itemId);
+            return Ok(new { deleted = true });
         }
 
-        _subtitles.Forget(itemId, slug);
-        _subtitles.Store.DeleteCache(itemId, slug);
-
-        // Translated/bilingual share the bi- cache: deleting either removes both
-        // representations (and any legacy single-mode render).
-        if (slug != null && slug != "source")
+        if (lang == "source")
         {
-            var counterpart = slug.StartsWith("bi-", StringComparison.Ordinal) ? slug[3..] : "bi-" + slug;
-            _subtitles.Forget(itemId, counterpart);
-            _subtitles.Store.DeleteCache(itemId, counterpart);
+            _subtitles.Cancel(itemId);
+            _subtitles.Forget(itemId, "source");
+            _subtitles.Store.DeleteCache(itemId, "source");
+            return Ok(new { deleted = true });
+        }
+
+        var langSlug = SubtitleStore.LangSlug(lang.StartsWith("bi-", StringComparison.Ordinal) ? lang[3..] : lang);
+        var translateJob = _subtitles.AllJobs().FirstOrDefault(j =>
+            j.ItemId == itemId && j.Translate && SubtitleStore.LangSlug(j.TargetLanguage) == langSlug);
+        translateJob?.Cts.Cancel();
+
+        // One translate task owns both cache representations of the language.
+        foreach (var key in new[] { langSlug, "bi-" + langSlug })
+        {
+            _subtitles.Forget(itemId, key);
+            _subtitles.Store.DeleteCache(itemId, key);
         }
 
         return Ok(new { deleted = true });
@@ -142,9 +148,8 @@ public class LmSubsController : ControllerBase
         ["asrProgress"] = 1.0,
         ["translateProgress"] = 1.0,
         ["error"] = null,
-        ["targetLanguage"] = slug == "source" ? "source" : slug.StartsWith("bi-", StringComparison.Ordinal) ? slug[3..] : slug,
-        ["mode"] = slug == "source" ? "source" : slug.StartsWith("bi-", StringComparison.Ordinal) ? "bilingual" : "translated",
-        ["cacheKey"] = slug,
+        ["kind"] = slug == "source" ? "asr" : "translate",
+        ["targetLanguage"] = slug,
         ["startedUtc"] = null,
         ["finishedUtc"] = null
     };
@@ -219,9 +224,8 @@ public class LmSubsController : ControllerBase
         ["asrProgress"] = Math.Round(job.AsrProgress, 3),
         ["translateProgress"] = Math.Round(job.TranslateProgress, 3),
         ["error"] = job.Error,
+        ["kind"] = job.Translate ? "translate" : "asr",
         ["targetLanguage"] = job.Translate ? job.TargetLanguage : "source",
-        ["mode"] = job.Mode,
-        ["cacheKey"] = job.CacheKey,
         ["startedUtc"] = job.StartedUtc,
         ["finishedUtc"] = job.FinishedUtc
     };

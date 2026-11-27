@@ -119,7 +119,7 @@ export default function (view) {
         box.innerHTML = tasks.map((t, i) => {
             const running = t.status === 'queued' || t.status === 'running';
             const pct = Math.round((t.progress || 0) * 100);
-            const lang = t.mode === 'source' ? 'ASR' : 'Translate → ' + escapeHtml(t.targetLanguage);
+            const lang = t.kind === 'asr' ? 'ASR' : 'Translate → ' + escapeHtml(t.targetLanguage);
             const detail = running
                 ? escapeHtml(t.stage || t.status) + ' — ' + pct + '%'
                 : (t.status === 'done' ? 'done' : escapeHtml(t.status) + (t.error ? ': ' + escapeHtml(t.error) : ''));
@@ -140,7 +140,7 @@ export default function (view) {
         }));
         box.querySelectorAll('.lm-task-del').forEach((b) => b.addEventListener('click', () => {
             const t = tasks[+b.dataset.i];
-            const lang = t.cacheKey || (t.mode === 'source' ? 'source' : t.targetLanguage);
+            const lang = t.kind === 'asr' ? 'source' : t.targetLanguage;
             Dashboard.confirm('Delete the cached result for "' + t.itemName + '" (' + lang + ')? Downloaded subtitle files are kept.', 'Delete task', (ok) => {
                 if (!ok) return;
                 ApiClient.ajax({ type: 'DELETE', url: ApiClient.getUrl('LmSubs/Tasks/' + t.itemId, { lang: lang }) })

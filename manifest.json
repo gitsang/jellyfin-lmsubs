@@ -8,6 +8,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "1.4.3.0",
+        "changelog": "Task list decoupled from subtitle entries: one ASR row per item + one Translate row per language (kind asr|translate). Downloads are triggers, not tasks. Delete takes source or a language.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.4.3.0/lmsubs_1.4.3.0.zip",
+        "checksum": "292613f3779a56705d3c7b406c2b7c65",
+        "timestamp": "2026-11-27T07:16:39Z"
+      },
+      {
         "version": "1.4.2.0",
         "changelog": "Fixed entry names (LM Subtitles - Source/Translate/Bilingual). Completed shows '(Completed)' on model lines instead of 'Ready (cached)'. Tasks: one ASR + one Translate row per language.",
         "targetAbi": "10.11.0.0",
