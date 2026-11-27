@@ -93,7 +93,7 @@ public class LmSubsController : ControllerBase
                 }
             }
 
-            if (_subtitles.Store.HasSourceCache(itemId) && seenAsr.Add(itemId))
+            if (_subtitles.Store.HasSourceResult(itemId) && seenAsr.Add(itemId))
             {
                 tasks.Add(CachedDto(itemId, "source"));
             }
@@ -181,7 +181,7 @@ public class LmSubsController : ControllerBase
         var targetLang = SubtitleService.NormalizeTargetLanguage(lang);
         var m = mode.ToLowerInvariant();
         var srt = m == "source"
-            ? _subtitles.Store.GetSrtKeyed(itemId, "source")
+            ? _subtitles.Store.EnsureSourceSrt(itemId)
             : _subtitles.Store.GetAnyTranslationSrt(itemId, SubtitleStore.LangSlug(targetLang));
         if (srt == null)
         {

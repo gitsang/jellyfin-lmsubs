@@ -351,7 +351,7 @@ public class SubtitleService
             // A complete cached result means no work: return a finished stub without
             // touching the ASR session (restart=true forces a real rerun).
             var cachedSrt = jobMode == "source"
-                ? _store.GetSrtKeyed(itemId, "source")
+                ? _store.EnsureSourceSrt(itemId)
                 : _store.GetAnyTranslationSrt(itemId, SubtitleStore.LangSlug(lang));
             if (!restart && cachedSrt != null)
             {

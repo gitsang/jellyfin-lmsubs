@@ -136,6 +136,29 @@ public class SubtitleStore
         return File.Exists(Path.Combine(dir, "source.srt")) || File.Exists(Path.Combine(dir, "cues.source.json"));
     }
 
+    // Transcript exists even when the session died mid-way: cues.source.json is
+    // persisted after every chunk, source.srt only at the end.
+    public bool HasSourceResult(Guid itemId) => HasSourceCache(itemId) && LoadSourceCues(itemId).Count > 0;
+
+    // Render source.srt from the cue cache on demand (partial transcripts included).
+    public string? EnsureSourceSrt(Guid itemId)
+    {
+        var existing = GetSrtKeyed(itemId, "source");
+        if (existing != null)
+        {
+            return existing;
+        }
+
+        var cues = LoadSourceCues(itemId);
+        if (cues.Count == 0)
+        {
+            return null;
+        }
+
+        RenderKeyed(itemId, "source", cues);
+        return GetSrtKeyed(itemId, "source");
+    }
+
     // Delete the whole item cache, or one language's cues+srt (source included).
     public void DeleteCache(Guid itemId, string? langSlug = null)
     {

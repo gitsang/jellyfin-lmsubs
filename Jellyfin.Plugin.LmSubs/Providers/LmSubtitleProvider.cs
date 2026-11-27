@@ -61,11 +61,19 @@ public class LmSubtitleProvider : ISubtitleProvider
 
         // ASR state comes from the shared session (live), not the job's last-tick
         // snapshot — a translate job blocked on an API call updates its copy rarely.
+        // Any persisted transcript counts as done, even if the session died mid-way
+        // (cues.source.json is written after every chunk).
         var asrRunning = session is { Status: "queued" or "running" };
-        var asrDone = !asrRunning && (session is { Status: "done" } || _service.Store.GetSrtKeyed(itemId, "source") != null);
+        var asrPartial = !asrRunning && session is { Status: "error" or "cancelled" };
+        var asrDone = !asrRunning &&
+                      (session is { Status: "done" } || _service.Store.EnsureSourceSrt(itemId) != null);
         if (asrRunning)
         {
             comment = comment.Replace("ASR: ", $"ASR ({session!.Progress * 100:0}%): ", StringComparison.Ordinal);
+        }
+        else if (asrPartial && asrDone)
+        {
+            comment = comment.Replace("ASR: ", $"ASR (Partial {session!.Progress * 100:0}%): ", StringComparison.Ordinal);
         }
         else if (asrDone)
         {
@@ -115,7 +123,7 @@ public class LmSubtitleProvider : ISubtitleProvider
         // Translated and bilingual share the paired bi- cache; translated strips the source line.
         var langSlug = SubtitleStore.LangSlug(SubtitleService.NormalizeTargetLanguage(lang));
         var cached = mode == "source"
-            ? _service.Store.GetSrtKeyed(itemId, "source")
+            ? _service.Store.EnsureSourceSrt(itemId)
             : _service.Store.GetAnyTranslationSrt(itemId, langSlug);
         if (cached != null)
         {

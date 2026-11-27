@@ -1,7 +1,7 @@
 ---
 name: "LMSubs"
 guid: "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b"
-version: "1.4.3.1"
+version: "1.4.3.2"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "gitsang"
@@ -17,6 +17,13 @@ category: "Metadata"
 artifacts:
   - "Jellyfin.Plugin.LmSubs.dll"
 changelog: |
+  ## 1.4.3.2
+  - Fix ASR state never showing Completed after a session died mid-way:
+    source.srt is only written when a session finishes, but
+    cues.source.json is persisted after every chunk. Done detection now
+    renders source.srt from cues on demand, so partially transcribed
+    items report ASR (Partial N%) / Completed instead of a bare model
+    name, and the Source entry becomes downloadable.
   ## 1.4.3.1
   - ASR progress in search results and task rows now always reads the
     live shared session instead of the translate job's last-tick copy

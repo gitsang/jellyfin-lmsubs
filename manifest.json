@@ -8,6 +8,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "1.4.3.2",
+        "changelog": "Fix ASR state after an interrupted session: partial transcripts (cues.source.json written per chunk) now render as Completed/Partial and are downloadable, instead of showing a bare model name forever.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.4.3.2/lmsubs_1.4.3.2.zip",
+        "checksum": "c27157a923db3dea12b14b4ff462dae3",
+        "timestamp": "2026-11-27T11:09:09Z"
+      },
+      {
         "version": "1.4.3.1",
         "changelog": "ASR progress always reads the live shared session in search results and task rows (fixes stale percentage while task shows done).",
         "targetAbi": "10.11.0.0",
