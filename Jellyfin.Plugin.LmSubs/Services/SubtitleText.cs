@@ -102,6 +102,9 @@ public static class SubtitleText
         return true;
     }
 
+    private const string SentenceEnders = "。！？!?…";
+    private const string ClauseBreaks = "，、；：,;:";
+
     public static List<SubtitleCue> Normalize(IEnumerable<AsrSegment> segments, double maxCharsPerCue = 80, double maxCueSeconds = 8)
     {
         var cues = new List<SubtitleCue>();
@@ -114,14 +117,15 @@ public static class SubtitleText
             }
 
             var span = Math.Max(seg.EndSeconds - seg.StartSeconds, 0.5);
-            if (text.Length <= maxCharsPerCue && span <= maxCueSeconds)
-            {
-                cues.Add(new SubtitleCue(seg.StartSeconds, seg.EndSeconds, text));
-                continue;
-            }
 
-            // Split proportionally by characters (works for CJK and space-separated text).
-            var pieces = SplitText(text, (int)maxCharsPerCue);
+            // Sentence-first: never cut mid-sentence when punctuation tells us where
+            // sentences end; time is apportioned by character count within the segment.
+            var pieces = SplitSentences(text)
+                .SelectMany(s => SplitText(s, (int)maxCharsPerCue))
+                .ToList();
+
+            // A short single sentence may exceed maxCueSeconds only because the ASR
+            // segment span is long (timestamp-less providers); keep it as one cue.
             var totalChars = pieces.Sum(p => p.Length);
             var t = seg.StartSeconds;
             foreach (var piece in pieces)
@@ -136,8 +140,103 @@ public static class SubtitleText
         return cues;
     }
 
+    // Split after sentence-ending punctuation (。！？!?…), keeping the punctuation
+    // attached. Latin '.' ends a sentence only when followed by space+capital/end,
+    // so abbreviations and decimals survive.
+    internal static List<string> SplitSentences(string text)
+    {
+        var sentences = new List<string>();
+        var start = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            var ch = text[i];
+            var isEnd = SentenceEnders.Contains(ch);
+            if (!isEnd && ch == '.')
+            {
+                var next = i + 1;
+                while (next < text.Length && text[next] == ' ')
+                {
+                    next++;
+                }
+
+                isEnd = next >= text.Length || char.IsUpper(text[next]);
+
+                // Common abbreviations keep their dot even before a capital.
+                if (isEnd)
+                {
+                    foreach (var abbr in new[] { "Dr", "Mr", "Mrs", "Ms", "Prof", "St", "vs", "etc", "e.g", "i.e" })
+                    {
+                        var at = i - abbr.Length;
+                        if (at >= 0 && text.AsSpan(at, abbr.Length).Equals(abbr, StringComparison.Ordinal) &&
+                            (at == 0 || !char.IsLetter(text[at - 1])))
+                        {
+                            isEnd = false;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!isEnd)
+            {
+                continue;
+            }
+
+            // Absorb consecutive enders and closing quotes/brackets.
+            var end = i + 1;
+            while (end < text.Length && (SentenceEnders.Contains(text[end]) || text[end] is '”' or '’' or '」' or '』' or ')' or '"' or '\''))
+            {
+                end++;
+            }
+
+            var sentence = text.Substring(start, end - start).Trim();
+            if (sentence.Length > 0)
+            {
+                sentences.Add(sentence);
+            }
+
+            start = end;
+            i = end - 1;
+        }
+
+        var tail = text.Substring(start).Trim();
+        if (tail.Length > 0)
+        {
+            sentences.Add(tail);
+        }
+
+        return sentences;
+    }
+
+    // Over-length sentences: prefer clause punctuation (，、；：,;:), then word
+    // boundaries for spaced text, then a hard character cut as the last resort.
     private static List<string> SplitText(string text, int maxLen)
     {
+        if (text.Length <= maxLen)
+        {
+            return new List<string> { text };
+        }
+
+        // Try the last clause break within the limit (not too early: >= 40% of maxLen).
+        var cut = -1;
+        for (var i = Math.Min(maxLen, text.Length) - 1; i >= maxLen * 2 / 5; i--)
+        {
+            if (ClauseBreaks.Contains(text[i]))
+            {
+                cut = i + 1;
+                break;
+            }
+        }
+
+        if (cut > 0 && cut < text.Length)
+        {
+            var head = text.Substring(0, cut).Trim();
+            var rest = text.Substring(cut).Trim();
+            var result = new List<string> { head };
+            result.AddRange(SplitText(rest, maxLen));
+            return result;
+        }
+
         var pieces = new List<string>();
         var words = text.Contains(' ') ? text.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList() : null;
         if (words != null)

@@ -199,4 +199,57 @@ public class ParsingTests
         // Mixed: 2 CJK + 6 latin -> 2 + 2
         Assert.Equal(4, SubtitleService.EstimateTokens("你好 abcde")); // 2 CJK + 6 other -> 2 + (6+3)/4
     }
+
+    [Fact]
+    public void SplitSentences_CjkEnders()
+    {
+        var parts = SubtitleText.SplitSentences("你好吗？我很好。今天天气不错！走吧…");
+        Assert.Equal(new[] { "你好吗？", "我很好。", "今天天气不错！", "走吧…" }, parts);
+    }
+
+    [Fact]
+    public void SplitSentences_LatinDotRules()
+    {
+        var parts = SubtitleText.SplitSentences("Hello there. How are you? I'm fine! See Dr. Smith at 3.5 pm.");
+        Assert.Equal(new[] { "Hello there.", "How are you?", "I'm fine!", "See Dr. Smith at 3.5 pm." }, parts);
+    }
+
+    [Fact]
+    public void Normalize_KeepsSentencesWhole()
+    {
+        // 3 sentences, total > 80 chars: each cue must be exactly one sentence.
+        var s1 = new string('一', 30) + "。";
+        var s2 = new string('二', 30) + "？";
+        var s3 = new string('三', 30) + "！";
+        var cues = SubtitleText.Normalize(new[] { new AsrSegment(0, 30, s1 + s2 + s3) });
+        Assert.Equal(3, cues.Count);
+        Assert.Equal(s1, cues[0].Text);
+        Assert.Equal(s2, cues[1].Text);
+        Assert.Equal(s3, cues[2].Text);
+        // Time proportional to chars: equal sentences -> ~10s each.
+        Assert.Equal(10, cues[0].End, 1);
+        Assert.Equal(20, cues[1].End, 1);
+        Assert.Equal(30, cues[2].End, 1);
+    }
+
+    [Fact]
+    public void Normalize_LongSentenceSplitsAtClause()
+    {
+        var clauseA = new string('甲', 45);
+        var clauseB = new string('乙', 45);
+        var cues = SubtitleText.Normalize(new[] { new AsrSegment(0, 20, clauseA + "，" + clauseB + "。") });
+        Assert.Equal(2, cues.Count);
+        Assert.EndsWith("，", cues[0].Text);
+        Assert.EndsWith("。", cues[1].Text);
+        Assert.DoesNotContain("乙", cues[0].Text);
+    }
+
+    [Fact]
+    public void Normalize_ShortSentenceLongSpanStaysOneCue()
+    {
+        // Timestamp-less provider: one short sentence spread over a 600s chunk.
+        var cues = SubtitleText.Normalize(new[] { new AsrSegment(0, 600, "你好。") });
+        Assert.Single(cues);
+        Assert.Equal("你好。", cues[0].Text);
+    }
 }
