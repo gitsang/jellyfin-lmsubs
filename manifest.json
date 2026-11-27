@@ -8,6 +8,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "1.4.0.1",
+        "changelog": "Cache hit on download returns immediately without restarting the ASR session or waiting.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.4.0.1/lmsubs_1.4.0.1.zip",
+        "checksum": "fe0c2fd8b9fe382fc80a8508d16af4b2",
+        "timestamp": "2026-11-27T03:23:02Z"
+      },
+      {
         "version": "1.4.0.0",
         "changelog": "Search lists three entries — Source / Translated / Bilingual — sharing one ASR pass; translation only runs for translated/bilingual downloads. 'Include translation' and 'Subtitle style' settings removed. Source track uses the video's metadata language.",
         "targetAbi": "10.11.0.0",

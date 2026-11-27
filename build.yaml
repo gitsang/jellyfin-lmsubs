@@ -1,7 +1,7 @@
 ---
 name: "LMSubs"
 guid: "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b"
-version: "1.4.0.0"
+version: "1.4.0.1"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "gitsang"
@@ -17,6 +17,9 @@ category: "Metadata"
 artifacts:
   - "Jellyfin.Plugin.LmSubs.dll"
 changelog: |
+  ## 1.4.0.1
+  - Cache hit on download returns immediately: no ASR session restart,
+    no waiting (fixes cached source download re-running transcription).
   ## 1.4.0.0
   - Search now lists three entries: Source (transcription only),
     Translated, and Bilingual — all sharing one ASR pass. Translation

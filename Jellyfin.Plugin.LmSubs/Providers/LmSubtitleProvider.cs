@@ -100,6 +100,24 @@ public class LmSubtitleProvider : ISubtitleProvider
             throw new FileNotFoundException("Unknown LMSubs subtitle id: " + id);
         }
 
+        // Cache hit: return immediately without starting or waiting on any job.
+        var cacheKey = mode switch
+        {
+            "source" => "source",
+            "bilingual" => "bi-" + SubtitleStore.LangSlug(SubtitleService.NormalizeTargetLanguage(lang)),
+            _ => SubtitleStore.LangSlug(SubtitleService.NormalizeTargetLanguage(lang))
+        };
+        var cached = _service.Store.GetSrtKeyed(itemId, cacheKey);
+        if (cached != null)
+        {
+            return new SubtitleResponse
+            {
+                Format = "srt",
+                Language = mode == "source" ? _service.SourceLanguageCode(itemId) : lang,
+                Stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(cached))
+            };
+        }
+
         // Ids carry ISO codes; job keys use the prompt-friendly language name.
         var job = _service.EnsureRunning(itemId, out var created, mode,
             mode == "source" ? null : SubtitleService.NormalizeTargetLanguage(lang));

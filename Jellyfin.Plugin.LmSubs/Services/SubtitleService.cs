@@ -353,6 +353,28 @@ public class SubtitleService
         try
         {
             created = false;
+
+            // A complete cached result means no work: return a finished stub without
+            // touching the ASR session (restart=true forces a real rerun).
+            if (!restart && _store.GetSrtKeyed(itemId, key.Item2) != null)
+            {
+                var cachedJob = new GenerationJob
+                {
+                    ItemId = itemId,
+                    TargetLanguage = lang,
+                    Mode = mode,
+                    ItemName = ItemName(itemId) ?? itemId.ToString(),
+                    Status = "done",
+                    Progress = 1,
+                    AsrProgress = 1,
+                    TranslateProgress = 1,
+                    Stage = "Cached"
+                };
+                cachedJob.Completion.TrySetResult();
+                _jobs[key] = cachedJob;
+                return cachedJob;
+            }
+
             if (_jobs.TryGetValue(key, out var existing))
             {
                 if (existing.Status is "queued" or "running")
