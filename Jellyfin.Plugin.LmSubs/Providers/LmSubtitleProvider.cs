@@ -59,37 +59,35 @@ public class LmSubtitleProvider : ISubtitleProvider
             (mode == "source" || SubtitleService.ThreeLetterLanguage(j.TargetLanguage) == langCode));
         var session = _service.GetSession(itemId);
 
-        var asrDone = session is { Status: "done" } || _service.Store.GetSrtKeyed(itemId, "source") != null;
-        var translateDone = job is { Status: "done" } || _service.Store.GetAnyTranslationSrt(itemId, langSlug) != null;
-
-        if (job is { Status: "queued" or "running" })
+        // ASR state comes from the shared session (live), not the job's last-tick
+        // snapshot — a translate job blocked on an API call updates its copy rarely.
+        var asrRunning = session is { Status: "queued" or "running" };
+        var asrDone = !asrRunning && (session is { Status: "done" } || _service.Store.GetSrtKeyed(itemId, "source") != null);
+        if (asrRunning)
         {
-            comment = comment.Replace("ASR: ", $"ASR ({job.AsrProgress * 100:0}%): ", StringComparison.Ordinal);
-            if (job.Translate)
+            comment = comment.Replace("ASR: ", $"ASR ({session!.Progress * 100:0}%): ", StringComparison.Ordinal);
+        }
+        else if (asrDone)
+        {
+            comment = comment.Replace("ASR: ", "ASR (Completed): ", StringComparison.Ordinal);
+        }
+
+        if (mode != "source")
+        {
+            var translateDone = job is { Status: "done" } || _service.Store.GetAnyTranslationSrt(itemId, langSlug) != null;
+            if (job is { Status: "queued" or "running" })
             {
                 comment = comment.Replace("Translate: ", $"Translate ({job.TranslateProgress * 100:0}%): ", StringComparison.Ordinal);
             }
-        }
-        else
-        {
-            if (session is { Status: "queued" or "running" } && mode == "source")
-            {
-                comment = comment.Replace("ASR: ", $"ASR ({session.Progress * 100:0}%): ", StringComparison.Ordinal);
-            }
-            else if (asrDone)
-            {
-                comment = comment.Replace("ASR: ", "ASR (Completed): ", StringComparison.Ordinal);
-            }
-
-            if (mode != "source" && translateDone)
+            else if (translateDone)
             {
                 comment = comment.Replace("Translate: ", "Translate (Completed): ", StringComparison.Ordinal);
             }
-        }
 
-        if (job is { Status: "error" })
-        {
-            comment += $"\nLast attempt failed: {job.Error}";
+            if (job is { Status: "error" })
+            {
+                comment += $"\nLast attempt failed: {job.Error}";
+            }
         }
 
         return new RemoteSubtitleInfo

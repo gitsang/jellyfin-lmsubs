@@ -4,9 +4,9 @@
     <TargetFramework>net9.0</TargetFramework>
     <RootNamespace>Jellyfin.Plugin.LmSubs</RootNamespace>
     <AssemblyName>Jellyfin.Plugin.LmSubs</AssemblyName>
-    <AssemblyVersion>1.4.3.0</AssemblyVersion>
-    <FileVersion>1.4.3.0</FileVersion>
-    <Version>1.4.3.0</Version>
+    <AssemblyVersion>1.4.3.1</AssemblyVersion>
+    <FileVersion>1.4.3.1</FileVersion>
+    <Version>1.4.3.1</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>

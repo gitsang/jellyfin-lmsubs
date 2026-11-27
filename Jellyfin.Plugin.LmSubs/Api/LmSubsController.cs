@@ -214,14 +214,22 @@ public class LmSubsController : ControllerBase
         });
     }
 
-    private static Dictionary<string, object?> JobDto(GenerationJob job) => new()
+    private Dictionary<string, object?> JobDto(GenerationJob job)
+    {
+        // ASR progress always reads the live session, not the job's last-tick copy.
+        var session = _subtitles.GetSession(job.ItemId);
+        var asrProgress = session?.Progress ?? job.AsrProgress;
+        return JobDtoCore(job, asrProgress);
+    }
+
+    private static Dictionary<string, object?> JobDtoCore(GenerationJob job, double asrProgress) => new()
     {
         ["itemId"] = job.ItemId,
         ["itemName"] = job.ItemName,
         ["status"] = job.Status,
         ["stage"] = job.Stage,
         ["progress"] = Math.Round(job.Progress, 3),
-        ["asrProgress"] = Math.Round(job.AsrProgress, 3),
+        ["asrProgress"] = Math.Round(asrProgress, 3),
         ["translateProgress"] = Math.Round(job.TranslateProgress, 3),
         ["error"] = job.Error,
         ["kind"] = job.Translate ? "translate" : "asr",
