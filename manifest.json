@@ -8,6 +8,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "1.4.1.1",
+        "changelog": "Fix Ready (cached) badge missing for legacy caches in search results (ISO code vs language slug mismatch).",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/gitsang/jellyfin-lmsubs/releases/download/v1.4.1.1/lmsubs_1.4.1.1.zip",
+        "checksum": "653371c05653d8fd7c947bb672b46e25",
+        "timestamp": "2026-11-27T03:53:35Z"
+      },
+      {
         "version": "1.4.1.0",
         "changelog": "Translated and bilingual share one translation job per language (translate once, two renders). No double LLM cost; deleting either cache removes both. Legacy caches still served.",
         "targetAbi": "10.11.0.0",

@@ -1,7 +1,7 @@
 ---
 name: "LMSubs"
 guid: "9b1f2a44-3c5d-4e6f-8a7b-9c0d1e2f3a4b"
-version: "1.4.1.0"
+version: "1.4.1.1"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "gitsang"
@@ -17,6 +17,9 @@ category: "Metadata"
 artifacts:
   - "Jellyfin.Plugin.LmSubs.dll"
 changelog: |
+  ## 1.4.1.1
+  - Fix "Ready (cached)" not shown for legacy caches in search results
+    (cache lookup used the ISO code instead of the language slug).
   ## 1.4.1.0
   - Translated and bilingual entries now share ONE translation job per
     language: translation runs once, producing paired source+translation

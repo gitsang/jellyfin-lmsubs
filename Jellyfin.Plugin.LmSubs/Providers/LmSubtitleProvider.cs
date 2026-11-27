@@ -35,23 +35,24 @@ public class LmSubtitleProvider : ISubtitleProvider
         var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
         var target = SubtitleService.NormalizeTargetLanguage(request.Language);
         var targetCode = SubtitleService.ThreeLetterLanguage(target);
+        var targetSlug = SubtitleStore.LangSlug(target);
         var sourceName = _service.SourceLanguageName(itemId);
         var sourceCode = _service.SourceLanguageCode(itemId);
 
         var infos = new List<RemoteSubtitleInfo>
         {
-            BuildInfo(itemId, "source", sourceCode, $"LM Subtitles — Source ({sourceName})",
+            BuildInfo(itemId, "source", sourceCode, targetSlug, $"LM Subtitles — Source ({sourceName})",
                 $"ASR: {config.AsrModel}", aiTranslated: false),
-            BuildInfo(itemId, "translated", targetCode, $"LM Subtitles — {target}",
+            BuildInfo(itemId, "translated", targetCode, targetSlug, $"LM Subtitles — {target}",
                 $"ASR: {config.AsrModel}\nTranslate: {config.TranslateModel}\nTarget: {target}", aiTranslated: true),
-            BuildInfo(itemId, "bilingual", targetCode, $"LM Subtitles — Bilingual ({sourceName} + {target})",
+            BuildInfo(itemId, "bilingual", targetCode, targetSlug, $"LM Subtitles — Bilingual ({sourceName} + {target})",
                 $"ASR: {config.AsrModel}\nTranslate: {config.TranslateModel}\nTarget: {target}", aiTranslated: true)
         };
 
         return Task.FromResult<IEnumerable<RemoteSubtitleInfo>>(infos);
     }
 
-    private RemoteSubtitleInfo BuildInfo(Guid itemId, string mode, string langCode, string name, string comment, bool aiTranslated)
+    private RemoteSubtitleInfo BuildInfo(Guid itemId, string mode, string langCode, string langSlug, string name, string comment, bool aiTranslated)
     {
         // translated and bilingual share one job (Mode=bilingual) and one bi- cache.
         var jobMode = mode == "source" ? "source" : "bilingual";
@@ -75,7 +76,7 @@ public class LmSubtitleProvider : ISubtitleProvider
         else if (job is { Status: "done" } ||
                  (mode == "source"
                      ? _service.Store.GetSrtKeyed(itemId, "source")
-                     : _service.Store.GetAnyTranslationSrt(itemId, langCode)) != null)
+                     : _service.Store.GetAnyTranslationSrt(itemId, langSlug)) != null)
         {
             comment += "\nReady (cached)";
         }
